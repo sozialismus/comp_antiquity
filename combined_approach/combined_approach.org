@@ -1,0 +1,152 @@
+#+PROPERTY: header-args:python :session :results output :exports both
+* Outline
+- This is an attempt to integrate both proiel_trf & grc_ner into a model, outputting in a .conllu format
+
+** Code - script for _trf, _ner 
+
+*** run_proiel_trf.py
+#+begin_src python :results output :eval never
+  import spacy
+  import json
+  import os
+
+  nlp = spacy.load("proiel_trf")
+
+  input_folder = "/path/to/corpus/"
+  output_folder = "/path/to/results/"
+
+  os.makedirs(output_folder, exist_ok=True)
+
+  for filename in os.listdir(input_folder):
+      if filename.endswith(".txt"):
+          file_path = os.path.join(input_folder, filename)
+          with open(file_path, "r", encoding="utf-8") as f:
+              text = f.read()
+
+          doc = nlp(text)
+
+          # Save dependency parsing results
+          output_path = os.path.join(output_folder, filename.replace(".txt", "_trf.json"))
+          with open(output_path, "w", encoding="utf-8") as f:
+              json.dump(doc.to_json(), f, ensure_ascii=False, indent=4)
+
+  print("proiel_trf processing completed.")
+
+#+end_src
+
+*** run_NER.py
+
+#+begin_src python :results output :eval never
+  import spacy
+  import json
+  import os
+
+  nlp = spacy.load("proiel_ner")
+
+  input_folder = "/path/to/corpus/"
+  output_folder = "/path/to/results/"
+
+  for filename in os.listdir(input_folder):
+      if filename.endswith(".txt"):
+          file_path = os.path.join(input_folder, filename)
+          with open(file_path, "r", encoding="utf-8") as f:
+              text = f.read()
+
+          doc = nlp(text)
+
+          # Save NER results
+          output_path = os.path.join(output_folder, filename.replace(".txt", "_ner.json"))
+          with open(output_path, "w", encoding="utf-8") as f:
+              json.dump(doc.to_json(), f, ensure_ascii=False, indent=4)
+
+  print("proiel_ner processing completed.")
+#+end_src
+** Code - using babel to switch environments
+*** Running proiel_trf
+#+BEGIN_SRC python :session proiel_trf :results output
+import os
+os.system("conda run -n proiel_trf python ~/Documents/au_work/main/comp_antiquity/combined_approach/run_proiel_trf.py")
+#+END_SRC
+
+#+RESULTS:
+: proiel_trf processing completed.
+: 
+: /home/gnosis/.conda/envs/proiel_trf/lib/python3.10/site-packages/spacy_transformers/layers/hf_shim.py:118: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+:   self._model.load_state_dict(torch.load(filelike, map_location=device))
+
+
+*** Running proiel_ner and merging results in a UD-compliant .conllu-file
+
+#+BEGIN_SRC python :session ner :results output
+import os
+os.system("conda run -n ner python ~/Documents/au_work/main/comp_antiquity/combined_approach/run_ner.py")
+#+END_SRC
+
+#+RESULTS:
+: proiel_ner processing completed.
+: 
+: /home/gnosis/.conda/envs/ner/lib/python3.9/site-packages/thinc/shims/pytorch.py:114: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+:   with torch.cuda.amp.autocast(self._mixed_precision):
+
+*** merge_results.py
+
+#+begin_src python :results output
+  import json
+  import os
+  import pandas as pd
+
+  input_folder = "/home/gnosis/Documents/au_work/main/corpus_10_results"
+  output_folder = "/home/gnosis/Documents/au_work/main/corpus_10_results_conllu"
+
+  os.makedirs(output_folder, exist_ok=True)
+
+  for filename in os.listdir(input_folder):
+      if filename.endswith("_trf.json"):
+          base_name = filename.replace("_trf.json", "")
+          trf_path = os.path.join(input_folder, filename)
+          ner_path = os.path.join(input_folder, base_name + "_ner.json")
+
+          with open(trf_path, "r", encoding="utf-8") as f:
+              trf_data = json.load(f)
+
+          with open(ner_path, "r", encoding="utf-8") as f:
+              ner_data = json.load(f)
+
+          # Extract named entities from NER results
+          ner_entities = {}
+          for ent in ner_data.get("ents", []):
+              for i in range(ent["start"], ent["end"]):
+                  ner_entities[i] = ent["label"]
+
+          conllu_data = []
+          for i, token in enumerate(trf_data["tokens"]):
+              # Get token information
+              text = token["text"]
+              lemma = token["lemma"]
+              upos = token["upos"]
+              feats = token.get("feats", "_")
+              head = token["head"] + 1 if token["head"] != i else 0  # ROOT is 0
+              dep = token["dep"]
+              
+              # Check if NER tag exists
+              ner_label = ner_entities.get(i, None)
+              misc_field = f"NER={ner_label}" if ner_label else "_"
+
+              # Append to CoNLL-U format
+              conllu_data.append([
+                  i + 1, text, lemma, upos, "_", feats, head, dep, "_", misc_field
+              ])
+
+          # Save CoNLL-U file
+          conllu_filename = os.path.join(output_folder, base_name + ".conllu")
+          with open(conllu_filename, "w", encoding="utf-8") as f:
+              f.write("# This file follows Universal Dependencies format\n\n")
+              for row in conllu_data:
+                  f.write("\t".join(map(str, row)) + "\n")
+              f.write("\n")
+
+  print("CoNLL-U files saved.")
+#+end_src
+
+#+RESULTS:
+
