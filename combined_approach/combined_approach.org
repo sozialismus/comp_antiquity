@@ -83,7 +83,7 @@ os.system("conda run -n ner python ~/Documents/au_work/main/comp_antiquity/combi
 #+END_SRC
 
 #+RESULTS:
-: proiel_ner processing completed.
+: ✅ NER processing completed.
 : 
 : /home/gnosis/.conda/envs/ner/lib/python3.9/site-packages/thinc/shims/pytorch.py:114: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
 :   with torch.cuda.amp.autocast(self._mixed_precision):
@@ -149,4 +149,5 @@ os.system("conda run -n ner python ~/Documents/au_work/main/comp_antiquity/combi
 #+end_src
 
 #+RESULTS:
+: CoNLL-U files saved.
 
