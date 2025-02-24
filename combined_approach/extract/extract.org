@@ -9,8 +9,8 @@ import re
 import os
 
 # Define input and output directories
-input_dir = "xml_files"  # Change this to your actual directory path
-output_dir = "processed_texts"
+input_dir = "/home/gnosis/Documents/au_work/main/corpora/opensource/SBLGNT-master/data/sblgnt/xml"  # Change this to your actual directory path
+output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT"
 
 # Ensure output directory exists
 os.makedirs(output_dir, exist_ok=True)
@@ -36,11 +36,132 @@ def process_xml_file(file_path):
     base_name = os.path.splitext(os.path.basename(file_path))[0]
     
     # Save NLP-ready text
-    with open(os.path.join(output_dir, f"{base_na
+    with open(os.path.join(output_dir, f"{base_name}_nlp_ready.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(nlp_text))
+
+# Iterate over all XML files in the directory
+for file_name in os.listdir(input_dir):
+    if file_name.endswith(".xml"):
+        file_path = os.path.join(input_dir, file_name)
+        print(f"Processing {file_name}...")
+        process_xml_file(file_path)
+
+print("Processing complete. Files saved in:", output_dir)
 #+end_src
+
+#+RESULTS:
+: None
 
 ** Swete_LXX
 - From [[https://github.com/OpenGreekAndLatin/septuagint-dev][Github, septuagint-dev]]
+*** Script for extraction according to Book, resulting in human-readable text & NLP-friendly text
+#+begin_src python
+import xml.etree.ElementTree as ET
+import re
+import os
+import json
+
+# Define input XML file and output directory
+xml_file_path = "old_testament_1901_vol1.xml"  # Change to your actual file
+output_dir = "processed_books"
+os.makedirs(output_dir, exist_ok=True)  # Ensure output directory exists
+
+# Define TEI XML namespace
+NAMESPACE = {"tei": "http://www.tei-c.org/ns/1.0"}
+
+# Function to clean and extract only Ancient Greek text
+def extract_greek_text(text):
+    """Removes all non-Greek characters while preserving diacritics and brackets."""
+    text = re.sub(r"<.*?>", "", text)  # Remove XML-like tags
+    return text.strip()
+
+# Function to extract bracketed text as variants
+def extract_variants(text):
+    """Finds bracketed text and returns a list of text-critical variants."""
+    variants = re.findall(r"\[(.*?)\]", text)  # Extract text inside brackets
+    return variants
+
+# Load and parse the XML file
+tree = ET.parse(xml_file_path)
+root = tree.getroot()
+
+# Process each book separately
+for book in root.findall(".//tei:div[@type='book']", NAMESPACE):
+    book_title_element = book.find("tei:head", NAMESPACE)  # Find book title
+    book_title = book_title_element.text.strip() if book_title_element is not None else "Unknown_Book"
+    
+    # File names
+    book_filename_clean = f"{book_title.replace(' ', '_')}_nlp_ready.txt"
+    book_filename_variants = f"{book_title.replace(' ', '_')}_variants.jsonl"
+    book_filename_marginal_notes = f"{book_title.replace(' ', '_')}_marginal_notes.jsonl"
+    book_filename_human_readable = f"{book_title.replace(' ', '_')}_human_readable.txt"
+
+    book_texts = []
+    human_readable_texts = []
+    variant_entries = []
+    marginal_note_entries = []
+
+    # Extract Greek text from paragraphs within the book
+    for paragraph in book.findall(".//tei:p", NAMESPACE):
+        paragraph_text = "".join(paragraph.itertext())  # Get full paragraph text
+        cleaned_text = extract_greek_text(paragraph_text)
+        
+        # Extract variants before removing brackets
+        variants = extract_variants(cleaned_text)
+        
+        # Store variants separately with context
+        if variants:
+            variant_entries.append(json.dumps({
+                "book": book_title,
+                "context": paragraph_text.replace("\n", " "),  # Store full text for reference
+                "variants": variants
+            }, ensure_ascii=False))
+
+        # Remove bracketed text for the clean NLP version
+        cleaned_text_nlp = re.sub(r"\[.*?\]", "", cleaned_text).strip()
+        if cleaned_text_nlp:
+            book_texts.append(cleaned_text_nlp)
+
+        # Add paragraph to the human-readable version, keeping brackets for variants
+        human_readable_texts.append(paragraph_text)
+
+    # Extract marginal notes (excluding footnotes)
+    for note in book.findall(".//tei:note", NAMESPACE):
+        note_type = note.get("type", "")
+        if note_type == "footnote":  # Ignore footnotes
+            continue
+        
+        note_text = "".join(note.itertext()).strip()  # Get the text inside <note>
+        cleaned_note = extract_greek_text(note_text)
+        
+        if cleaned_note:
+            marginal_note_entries.append(json.dumps({
+                "book": book_title,
+                "note": cleaned_note
+            }, ensure_ascii=False))
+
+    # Save cleaned Greek text as a .txt file
+    with open(os.path.join(output_dir, book_filename_clean), "w", encoding="utf-8") as f:
+        f.write("\n".join(book_texts))
+
+    # Save human-readable text with references
+    with open(os.path.join(output_dir, book_filename_human_readable), "w", encoding="utf-8") as f:
+        f.write("\n".join(human_readable_texts))
+
+    # Save variants as a JSONL file (one JSON object per line)
+    if variant_entries:
+        with open(os.path.join(output_dir, book_filename_variants), "w", encoding="utf-8") as f:
+            f.write("\n".join(variant_entries) + "\n")
+
+    # Save marginal notes as a JSONL file (one JSON object per line)
+    if marginal_note_entries:
+        with open(os.path.join(output_dir, book_filename_marginal_notes), "w", encoding="utf-8") as f:
+            f.write("\n".join(marginal_note_entries) + "\n")
+
+    print(f"Processed: {book_title}")
+
+print("Processing complete! Cleaned texts, variants, and marginal notes saved separately.")
+#+end_src
 ** Eliranwong - LXX, Rahlf
 - From [[https://github.com/eliranwong/LXX-Rahlfs-1935/tree/master/11_end-users_files/MyBible/Bibles][Github, "Mybibles", final main & books]]
 
@@ -107,7 +228,7 @@ import pandas as pd
 import re
 
 # Load the CSV file
-file_path = "LXX_final_main.csv"
+file_path = "/home/gnosis/Documents/au_work/main/corpora/opensource/rahfl_eliranwong/LXX_final_main.csv"
 df = pd.read_csv(file_path, encoding="utf-8")
 
 # Mapping book codes to names
