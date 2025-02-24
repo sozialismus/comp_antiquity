@@ -62,25 +62,17 @@
   print("proiel_ner processing completed.")
 #+end_src
 ** Code - using babel to switch environments
-*** Running proiel_trf
+*** Running proiel_trf - full text
 #+BEGIN_SRC python :session proiel_trf :results output
 import os
 os.system("conda run -n proiel_trf python ~/Documents/au_work/main/comp_antiquity/combined_approach/run_proiel_trf.py")
 #+END_SRC
 
-#+RESULTS:
-: /home/gnosis/.conda/envs/proiel_trf/lib/python3.10/site-packages/spacy_transformers/layers/hf_shim.py:118: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
-:   self._model.load_state_dict(torch.load(filelike, map_location=device))
-: /tmp/tmppadj8bmg: line 3: 495217 Killed                  python /home/gnosis/Documents/au_work/main/comp_antiquity/combined_approach/run_proiel_trf.py
-: 
-: /usr/lib/python3.13/site-packages/conda/gateways/logging.py:66: FutureWarning: functools.partial will be a method descriptor in future Python versions; wrap it in staticmethod() if you want to preserve the old behavior
-:   record.msg = self.TOKEN_REPLACE(record.msg)
-: ERROR conda.cli.main_run:execute(125): `conda run python /home/gnosis/Documents/au_work/main/comp_antiquity/combined_approach/run_proiel_trf.py` failed. (See above for error)
 
 
-*** Running proiel_ner 
+*** Running proiel_ner - full text
 
-#+BEGIN_SRC python :session ner :results output
+#+BEGIN_SRC python :session ner :results output :eval never
 import os
 os.system("conda run -n ner python ~/Documents/au_work/main/comp_antiquity/combined_approach/run_ner.py")
 #+END_SRC
@@ -94,8 +86,8 @@ os.system("conda run -n ner python ~/Documents/au_work/main/comp_antiquity/combi
 ** Merging results in a UD-compliant .conllu-file
 
 *** merge_results.py
-
-#+begin_src python :results output
+**** .json vil ikke merges til en .conllu her :)
+#+begin_src python :results output :eval never
   import json
   import os
   import pandas as pd
@@ -105,65 +97,165 @@ os.system("conda run -n ner python ~/Documents/au_work/main/comp_antiquity/combi
 
   os.makedirs(output_folder, exist_ok=True)
 
-  for filename in os.listdir(input_folder):
+# Collect all .jsonl files
+json_files = [f for f in os.listdir(input_folder) if f.endswith(".json")]
+
+# Find matching _trf.json and _ner.json files
+file_pairs = {}
+for filename in json_files:
+    base_name = filename.replace("_trf.json", "").replace("_ner.json", "")
+
+    if base_name not in file_pairs:
+        file_pairs[base_name] = {}
+
     if filename.endswith("_trf.json"):
-        base_name = filename.replace("_trf.json", "")
-        trf_path = os.path.join(input_folder, filename)
-        ner_path = os.path.join(input_folder, base_name + "_ner.json")
+        file_pairs[base_name]["trf"] = os.path.join(input_folder, filename)
+    elif filename.endswith("_ner.json"):
+        file_pairs[base_name]["ner"] = os.path.join(input_folder, filename)
 
-        # Load dependency parsing data (proiel_trf)
-        with open(trf_path, "r", encoding="utf-8") as f:
-            trf_data = json.load(f)
+# Merge TRF and NER files into CoNLL-U format
+for base_name, paths in file_pairs.items():
+    if "trf" not in paths or "ner" not in paths:
+        print(f"⚠️ Warning: Missing TRF or NER file for {base_name}, skipping merge.")
+        continue
 
-        # Load Named Entity Recognition (NER) results
-        with open(ner_path, "r", encoding="utf-8") as f:
-            ner_data = json.load(f)
+    trf_path = paths["trf"]
+    ner_path = paths["ner"]
+    conllu_filename = os.path.join(output_folder, base_name + ".conllu")
 
-        # Validate token structure
-        if not isinstance(trf_data.get("tokens"), list):
-            print(f"Warning: 'tokens' missing or not a list in {trf_path}")
-            continue  # Skip this file
+    with open(trf_path, "r", encoding="utf-8") as trf_file, \
+         open(ner_path, "r", encoding="utf-8") as ner_file, \
+         open(conllu_filename, "w", encoding="utf-8") as conllu_file:
 
-        # 📌 Extract Named Entities and store in a dictionary
-        ner_entities = {}
-        for ent in ner_data.get("ents", []):
-            for i in range(ent["start"], ent["end"]):  # Assign NER labels to token indices
-                ner_entities[i] = ent["label"]
+        conllu_file.write("# This file follows Universal Dependencies format\n\n")
 
-        # 🛠 Construct CoNLL-U format data
-        conllu_data = []
-        for i, token in enumerate(trf_data["tokens"]):
-            # ✅ Extract token attributes safely (use "_" as default for missing values)
-            token_id = i + 1  # CoNLL-U ID (1-based index)
-            form = token.get("text", token.get("orth", token.get("form", "_")))  # Word form
-            lemma = token.get("lemma", "_")  # Lemma
-            upos = token.get("upos", "_")  # Universal POS
-            xpos = "_"  # XPOS (not available)
-            feats = token.get("feats", "_")  # Morphological features
-            head = token.get("head", -1) + 1 if token.get("head", -1) != i else 0  # Root is 0
-            deprel = token.get("dep", "_")  # Dependency relation
-            deps = "_"  # Enhanced dependencies (not available)
+        # Load JSON lines into dictionaries indexed by "id"
+        trf_data = {entry["id"]: entry for entry in map(json.loads, trf_file)}
+        ner_data = {entry["id"]: entry for entry in map(json.loads, ner_file)}
 
-            # 🏷️ Named Entity Label (stored in MISC only if present)
-            ner_label = ner_entities.get(i, None)
-            misc_field = f"ner={ner_label}" if ner_label else "_"
+        # Merge TRF and NER entries based on "id"
+        for token_id in sorted(trf_data.keys()):  # Ensure correct order
+            trf_entry = trf_data[token_id]
+            ner_entry = ner_data.get(token_id, {"ner": "O"})  # Default to "O" if missing
+
+            # ✅ Extract token attributes safely
+            form = trf_entry.get("text", "_")
+            lemma = trf_entry.get("lemma", "_")
+            upos = trf_entry.get("upos", "_")
+            xpos = trf_entry.get("xpos", "_")
+            feats = trf_entry.get("feats", "_")
+            head = trf_entry.get("head", 0)
+            deprel = trf_entry.get("dep", "_")
+            deps = trf_entry.get("deps", "_")
+            ner_label = ner_entry.get("ner", "O")
+
+            # 📌 Store Named Entity Label in MISC
+            misc_field = f"NER={ner_label}" if ner_label != "O" else "_"
 
             # 📌 Append token data to CoNLL-U format
-            conllu_data.append([
-                token_id, form, lemma, upos, xpos, feats, head, deprel, deps, misc_field
-            ])
+            conllu_row = [token_id, form, lemma, upos, xpos, feats, head, deprel, deps, misc_field]
+            conllu_file.write("\t".join(map(str, conllu_row)) + "\n")
 
-        # 📝 Save CoNLL-U file
-        conllu_filename = os.path.join(output_folder, base_name + ".conllu")
-        with open(conllu_filename, "w", encoding="utf-8") as f:
-            f.write("# This file follows Universal Dependencies format\n\n")
-            for row in conllu_data:
-                f.write("\t".join(map(str, row)) + "\n")
-            f.write("\n")
+        conllu_file.write("\n")  # Separate sentences with a blank line
 
-print("✅ CoNLL-U files saved successfully.")
+print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
 #+end_src
 
 #+RESULTS:
-: CoNLL-U files saved.
+**** nyt forsøg
 
+#+begin_src python :results output
+  import os
+  import json
+  import re  # ✅ Regex for flexible filename matching
+
+  input_folder = "/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results"
+  # debug - check files are actually located in input
+  # files = os.listdir(input_folder)
+  # print("📂 Files in input folder:", files)
+  output_folder = "/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results_conllu"
+
+  os.makedirs(output_folder, exist_ok=True)
+
+  # Collect all .json files (assuming they are NDJSON)
+  json_files = [f for f in os.listdir(input_folder) if f.endswith(".json")]
+
+  # Find matching _trf.json and _ner.json files
+  file_pairs = {}
+  for filename in json_files:
+      # Remove `_trf.json` or `_ner.json` to get the base name
+      base_name = re.sub(r"(_trf|_ner)\.json$", "", filename)
+      print(f"Processing file: {filename} → Base name detected: {base_name}")
+
+      if base_name not in file_pairs:
+          file_pairs[base_name] = {}
+
+      if filename.endswith("_trf.json"):
+          file_pairs[base_name]["trf"] = os.path.join(input_folder, filename)
+      elif filename.endswith("_ner.json"):
+          file_pairs[base_name]["ner"] = os.path.join(input_folder, filename)
+
+  # Debugging: Print detected file pairs
+  print(f"🔍 Detected file pairs: {file_pairs}")
+
+  # Merge TRF and NER files into CoNLL-U format
+  for base_name, paths in file_pairs.items():
+      if "trf" not in paths or "ner" not in paths:
+          print(f"⚠️ Warning: Missing TRF or NER file for {base_name}, skipping merge.")
+          continue
+
+      trf_path = paths["trf"]
+      ner_path = paths["ner"]
+      conllu_filename = os.path.join(output_folder, base_name + ".conllu")
+
+      with open(trf_path, "r", encoding="utf-8") as trf_file, \
+           open(ner_path, "r", encoding="utf-8") as ner_file, \
+           open(conllu_filename, "w", encoding="utf-8") as conllu_file:
+
+          conllu_file.write("# This file follows Universal Dependencies format\n\n")
+
+          # Read NDJSON line-by-line
+          trf_data = {entry["id"]: entry for entry in map(json.loads, trf_file)}
+          ner_data = {entry["id"]: entry for entry in map(json.loads, ner_file)}
+
+          # Debugging: Check if data is being read
+          print(f"📄 Processing {base_name}: {len(trf_data)} tokens found in TRF")
+          print(f"📄 Processing {base_name}: {len(ner_data)} tokens found in NER")
+
+          # Merge TRF and NER based on "id"
+          for token_id in sorted(trf_data.keys()):  # Ensure correct order
+              trf_entry = trf_data[token_id]
+              ner_entry = ner_data.get(token_id, {"ner": "O"})  # Default to "O"
+
+              # ✅ Extract token attributes
+              form = trf_entry.get("text", "_")
+              lemma = trf_entry.get("lemma", "_")
+              upos = trf_entry.get("upos", "_")
+              xpos = "_"
+              feats = trf_entry.get("feats", "_")
+              head = trf_entry.get("head", 0)
+              deprel = trf_entry.get("dep", "_")
+              deps = trf_entry.get("deps", "_")
+              ner_label = ner_entry.get("ner", "O")
+
+              # 🏷️ Store Named Entity Label in MISC
+              misc_field = f"NER={ner_label}" if ner_label != "O" else "_"
+
+              # 📌 Append token data to CoNLL-U format
+              conllu_row = [token_id, form, lemma, upos, xpos, feats, head, deprel, deps, misc_field]
+              conllu_file.write("\t".join(map(str, conllu_row)) + "\n")
+
+          conllu_file.write("\n")  # Separate sentences with a blank line
+
+  print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
+#+end_src
+
+#+RESULTS:
+: 🔍 Detected file pairs: {'NA28-050PHP': {'trf': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-050PHP_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-050PHP_ner.json'}, 'NA28-041MRK': {'trf': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-041MRK_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-041MRK_ner.json'}, 'NA28-044ACT': {'trf': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-044ACT_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-044ACT_ner.json'}, 'NA28-0601PE': {'trf': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-0601PE_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-0601PE_ner.json'}, 'SEP-001GEN': {'trf': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/SEP-001GEN_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/SEP-001GEN_ner.json'}, 'SEP-007JDG': {'trf': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/SEP-007JDG_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/SEP-007JDG_ner.json'}}
+: 📄 Processing NA28-050PHP: 1882 tokens found in TRF
+: 📄 Processing NA28-041MRK: 2275 tokens found in TRF
+: 📄 Processing NA28-044ACT: 2229 tokens found in TRF
+: 📄 Processing NA28-0601PE: 1894 tokens found in TRF
+: 📄 Processing SEP-001GEN: 2227 tokens found in TRF
+: 📄 Processing SEP-007JDG: 2192 tokens found in TRF
+: ✅ Merged proiel_trf and NER outputs into CoNLL-U format.

@@ -1,6 +1,7 @@
 import spacy
 import json
 import os
+import gc  # 🚀 Garbage collector to free memory
 
 nlp = spacy.load("grc_ner_trf")
 
@@ -15,25 +16,27 @@ def read_files():
         if filename.endswith(".txt"):
             file_path = os.path.join(input_folder, filename)
             with open(file_path, "r", encoding="utf-8") as f:
-                yield f.read(), filename  # Yield text + filename instead of storing in a list
+                # full text, no word limit
+                # yield f.read(), filename  # ✅ No word limit (full text)
+                # limit to reading texts to the first 2000 words
+                text = f.read().split()[:2000]  # ✅ Limit to first 2000 words
+                yield " ".join(text), filename  # ✅ Yield truncated text & filename
 
-# Process the files with nlp.pipe() in batches of 5 files at a time
-for doc, filename in nlp.pipe(read_files(), batch_size=5, as_tuples=True):
-    # Process the NER model for the text of each file
-    doc = nlp(doc)  # Apply NER to the document
-
-    # Extract entity information for each document
-    ner_data = {
-        "tokens": [token.text for token in doc],
-        "ents": [
-            {"start": ent.start, "end": ent.end, "label": ent.label_}
-            for ent in doc.ents
-        ]
-    }
-
-    # Save the NER results to disk immediately to avoid memory spikes
+# Process the files with nlp.pipe() in batches of x files at a time
+for doc, filename in nlp.pipe(read_files(), batch_size=1, as_tuples=True):
     output_path = os.path.join(output_folder, filename.replace(".txt", "_ner.json"))
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(ner_data, f, ensure_ascii=False, indent=4)
 
-print("✅ NER processing completed.")
+    with open(output_path, "w", encoding="utf-8") as f:
+        for token in doc:
+            token_data = {
+                "id": token.i + 1,  # ✅ 1-based token index
+                "text": token.text,  # ✅ Token text
+                "ner": token.ent_type_ if token.ent_type_ else "O"  # ✅ Named Entity Label (O if none)
+            }
+            f.write(json.dumps(token_data, ensure_ascii=False) + "\n")  # ✅ Write NDJSON format
+
+    # Free memory after processing each file
+    del doc
+    gc.collect()
+
+print("✅ NER processing completed (NDJSON format).")

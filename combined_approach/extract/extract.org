@@ -1,0 +1,157 @@
+* Extracting text
+- The following code will be for the purpose of extracting text from various sources
+** SBLGNT
+- From [[https://github.com/LogosBible/SBLGNT][Github, Logos, SBLGNT text]]
+*** Script for extraction - already lovely close-reading friendly text
+#+begin_src python
+import xml.etree.ElementTree as ET
+import re
+import os
+
+# Define input and output directories
+input_dir = "xml_files"  # Change this to your actual directory path
+output_dir = "processed_texts"
+
+# Ensure output directory exists
+os.makedirs(output_dir, exist_ok=True)
+
+# Function to process a single XML file
+def process_xml_file(file_path):
+    tree = ET.parse(file_path)
+    root = tree.getroot()
+    
+    nlp_text = []
+    
+    for paragraph in root.findall(".//p"):
+        verse_text = []
+        for word in paragraph.findall(".//w"):
+            verse_text.append(word.text.strip() if word.text else "")
+        
+        full_text = " ".join(verse_text)
+        nlp_text_clean = re.sub(r"[^\u0370-\u03FF\u1F00-\u1FFF\s]", "", full_text)  # Keep only Greek characters
+        
+        nlp_text.append(nlp_text_clean)
+    
+    # Extract filename without extension
+    base_name = os.path.splitext(os.path.basename(file_path))[0]
+    
+    # Save NLP-ready text
+    with open(os.path.join(output_dir, f"{base_na
+#+end_src
+
+** Swete_LXX
+- From [[https://github.com/OpenGreekAndLatin/septuagint-dev][Github, septuagint-dev]]
+** Eliranwong - LXX, Rahlf
+- From [[https://github.com/eliranwong/LXX-Rahlfs-1935/tree/master/11_end-users_files/MyBible/Bibles][Github, "Mybibles", final main & books]]
+
+- Firstly - what are the various books, which are contained in this huge .csv?
+#+begin_src csv
+#ccccff	10	Gen	Genesis
+#ccccff	20	Exod	Exodus
+#ccccff	30	Lev	Leviticus
+#ccccff	40	Num	Numbers
+#ccccff	50	Deut	Deuteronomy
+#ffcc99	60	JoshB	Joshua B
+#ffcc99	70	JudgB	Judges B
+#ffcc99	80	Ruth	Ruth
+#ffcc99	90	1Sam	1 Samuel (1 Kingdoms)
+#ffcc99	100	2Sam	2 Samuel (2 Kingdoms)
+#ffcc99	110	1Kgs	1 Kings (3 Kingdoms)
+#ffcc99	120	2Kgs	2 Kings (4 Kingdoms)
+#ffcc99	130	1Chr	1 Chronicles
+#ffcc99	140	2Chr	2 Chronicles
+#ffcc99	150	Ezra	Ezra (Esdras B/II: 1-10)
+#ffcc99	160	Neh	Nehemiah (Esdras B/II: 11-23)
+#ffcc99	190	Esth	Esther (with additions)
+#66ff99	220	Job	Job
+#66ff99	230	Ps	Psalms
+#66ff99	240	Prov	Proverbs
+#66ff99	250	Qoh	Ecclesiastes (Preacher)
+#66ff99	260	Cant	Canticle (Song of Solomon)
+#ff9fb4	290	Isa	Isaiah
+#ff9fb4	300	Jer	Jeremiah
+#ff9fb4	310	Lam	Lamentations (Threni)
+#ff9fb4	330	Ezek	Ezekiel
+#ff9fb4	340	DanOG	Daniel LXX
+#ffff99	350	Hos	Hosea
+#ffff99	360	Joel	Joel
+#ffff99	370	Amos	Amos
+#ffff99	380	Obad	Obadiah
+#ffff99	390	Jonah	Jonah
+#ffff99	400	Mic	Micah
+#ffff99	410	Nah	Nahum
+#ffff99	420	Hab	Habakkuk
+#ffff99	430	Zeph	Zephaniah
+#ffff99	440	Hag	Haggai
+#ffff99	450	Zech	Zechariah
+#ffff99	460	Mal	Malachi
+#C0C0C0	165	1Esdr	Esdras A/I
+#C0C0C0	170	TobBA	Tobit BA
+#C0C0C0	180	Jdt	Judith
+#C0C0C0	232	PsSol	Psalms of Solomon
+#C0C0C0	462	1Mac	I Maccabees
+#C0C0C0	464	2Mac	II Maccabees
+#C0C0C0	466	3Mac	III Maccabees
+#C0C0C0	467	4Mac	IV Maccabees
+#C0C0C0	270	Wis	Wisdom of Solomon
+#C0C0C0	280	Sir	Wisdom of Sirach
+#C0C0C0	315	EpJer	Epistle of Jeremiah
+#C0C0C0	320	Bar	Baruch
+#C0C0C0	325	SusOG	Susanna LXX
+#C0C0C0	345	BelOG	Bel LXX
+#C0C0C0	800	Od	Odes
+#+end_src
+*** Script for extraction according to Book, resulting in human-readable text & NLP-friendly text
+#+begin_src python
+import pandas as pd
+import re
+
+# Load the CSV file
+file_path = "LXX_final_main.csv"
+df = pd.read_csv(file_path, encoding="utf-8")
+
+# Mapping book codes to names
+book_mapping = {
+    "10": "Genesis", "20": "Exodus", "30": "Leviticus", "40": "Numbers", "50": "Deuteronomy",
+    "60": "Joshua_B", "70": "Judges_B", "80": "Ruth", "90": "1_Samuel", "100": "2_Samuel",
+    "110": "1_Kings", "120": "2_Kings", "130": "1_Chronicles", "140": "2_Chronicles", "150": "Ezra",
+    "160": "Nehemiah", "190": "Esther", "220": "Job", "230": "Psalms", "240": "Proverbs",
+    "250": "Ecclesiastes", "260": "Song_of_Solomon", "290": "Isaiah", "300": "Jeremiah",
+    "310": "Lamentations", "330": "Ezekiel", "340": "Daniel_LXX", "350": "Hosea", "360": "Joel",
+    "370": "Amos", "380": "Obadiah", "390": "Jonah", "400": "Micah", "410": "Nahum",
+    "420": "Habakkuk", "430": "Zephaniah", "440": "Haggai", "450": "Zechariah", "460": "Malachi",
+    "165": "1_Esdras", "170": "Tobit_BA", "180": "Judith", "232": "Psalms_of_Solomon",
+    "462": "1_Maccabees", "464": "2_Maccabees", "466": "3_Maccabees", "467": "4_Maccabees",
+    "270": "Wisdom_of_Solomon", "280": "Wisdom_of_Sirach", "315": "Epistle_of_Jeremiah",
+    "320": "Baruch", "325": "Susanna_LXX", "345": "Bel_LXX", "800": "Odes"
+}
+
+# Initialize storage for books
+human_readable_books = {book: [] for book in book_mapping.values()}
+nlp_text_books = {book: [] for book in book_mapping.values()}
+
+# Process each row
+for row in df.iloc[:, 0]:
+    parts = row.split("\t")
+    if len(parts) < 4:
+        continue  # Skip malformed rows
+
+    book_code, chapter, verse = parts[:3]
+    greek_text = re.sub(r"<S>\d+</S>|<m>.*?</m>", "", parts[3])  # Remove markers
+    greek_text_human = re.sub(r"<.*?>", "", greek_text)  # Remove remaining XML-like markup
+    greek_text_nlp = re.sub(r"[^\u0370-\u03FF\u1F00-\u1FFF\s]", "", greek_text)  # Keep only Greek characters and diacritics
+
+    if book_code in book_mapping:
+        book_name = book_mapping[book_code]
+        human_readable_books[book_name].append(f"{book_code}:{chapter}:{verse} {greek_text_human}")
+        nlp_text_books[book_name].append(greek_text_nlp)
+
+# Save outputs
+for book, content in human_readable_books.items():
+    with open(f"{book}_human_readable.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(content))
+
+for book, content in nlp_text_books.items():
+    with open(f"{book}_nlp_ready.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(content))
+#+end_src
