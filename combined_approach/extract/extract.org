@@ -3,6 +3,7 @@
 ** SBLGNT
 - From [[https://github.com/LogosBible/SBLGNT][Github, Logos, SBLGNT text]]
 *** Script for extraction - already lovely close-reading friendly text
+**** No punct
 #+begin_src python
 import xml.etree.ElementTree as ET
 import re
@@ -10,7 +11,7 @@ import os
 
 # Define input and output directories
 input_dir = "/home/gnosis/Documents/au_work/main/corpora/opensource/SBLGNT-master/data/sblgnt/xml"  # Change this to your actual directory path
-output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT"
+output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_nopunct"
 
 # Ensure output directory exists
 os.makedirs(output_dir, exist_ok=True)
@@ -51,10 +52,75 @@ print("Processing complete. Files saved in:", output_dir)
 
 #+RESULTS:
 : None
+**** Punctuation included
+
+#+begin_src python
+  import xml.etree.ElementTree as ET
+  import re
+  import os
+
+  # Define input and output directories
+  input_dir = "/home/gnosis/Documents/au_work/main/corpora/opensource/SBLGNT-master/data/sblgnt/xml"  # Change this to your actual directory path
+  output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct"
+  # Ensure output directory exists
+  os.makedirs(output_dir, exist_ok=True)
+
+  # Function to process a single XML file
+  def process_xml_file(file_path):
+      tree = ET.parse(file_path)
+      root = tree.getroot()
+      
+      nlp_text = []
+      
+      for paragraph in root.findall(".//p"):
+          verse_text = []
+
+          for element in paragraph:
+              if element.tag == "prefix" or element.tag == "suffix":
+                  text = element.text.strip() if element.text else ""
+                  if text:
+                      # Attach punctuation **without adding extra spaces**
+                      verse_text.append(text)
+              elif element.tag == "w":
+                  text = element.text.strip() if element.text else ""
+                  if text:
+                      # Append words with a space **before** them
+                      if verse_text:  # Only add a space if this is not the first word
+                          verse_text.append(" ")
+                      verse_text.append(text)
+
+          # Join everything into a properly spaced sentence
+          full_text = "".join(verse_text).strip()
+
+          # Updated regex: keep Greek letters, spaces, and punctuation marks (.,;·)
+          nlp_text_clean = re.sub(r"[^\u0370-\u03FF\u1F00-\u1FFF\s.,;·]", "", full_text)
+
+          nlp_text.append(nlp_text_clean)
+          
+      # Extract filename without extension
+      base_name = os.path.splitext(os.path.basename(file_path))[0]
+      
+      # Save NLP-ready text
+      with open(os.path.join(output_dir, f"{base_name}_nlp_ready.txt"), "w", encoding="utf-8") as f:
+          f.write("\n".join(nlp_text))
+
+  # Iterate over all XML files in the directory
+  for file_name in os.listdir(input_dir):
+      if file_name.endswith(".xml"):
+          file_path = os.path.join(input_dir, file_name)
+          print(f"Processing {file_name}...")
+          process_xml_file(file_path)
+
+  print("Processing complete. Files saved in:", output_dir)
+
+#+end_src
+
+#+RESULTS:
+: None
 
 ** Swete_LXX
 - From [[https://github.com/OpenGreekAndLatin/septuagint-dev][Github, septuagint-dev]]
-*** Script for extraction according to Book, resulting in human-readable text & NLP-friendly text
+*** Script for extraction according to Book, resulting in human-readable text & NLP-friendly text - no punct
 #+begin_src python
 import xml.etree.ElementTree as ET
 import re
@@ -162,6 +228,281 @@ for book in root.findall(".//tei:div[@type='book']", NAMESPACE):
 
 print("Processing complete! Cleaned texts, variants, and marginal notes saved separately.")
 #+end_src
+*** Same, but punctuation included
+#+begin_src python :results output
+    import xml.etree.ElementTree as ET
+    import re
+    import os
+    import json
+    from glob import glob  # Allows processing multiple XML files
+    
+    # Define input and output directories
+    xml_files = glob("/home/gnosis/Documents/au_work/main/corpora/opensource/swete_sep/*.xml")
+    # Folder containing the split XML parts
+    output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/Swete_punct"
+    os.makedirs(output_dir, exist_ok=True)  # Ensure output directory exists
+
+    # Define TEI XML namespace
+    NAMESPACE = {"tei": "http://www.tei-c.org/ns/1.0"}
+
+    # Function to clean and extract only Ancient Greek text (preserving punctuation)
+    def extract_greek_text(text):
+        """Removes all non-Greek characters except punctuation and diacritics."""
+        return re.sub(r"[^\u0370-\u03FF\u1F00-\u1FFF\s.,;·()\[\]]", "", text).strip()
+
+    # Function to extract bracketed text as variants
+    def extract_variants(text):
+        """Finds bracketed text and returns a list of text-critical variants."""
+        return re.findall(r"\[(.*?)\]", text)  # Extract text inside brackets
+
+    # Process each XML file separately
+    for xml_file_path in xml_files:
+        print(f"Processing: {xml_file_path}")
+        
+        # Load and parse the XML file
+        tree = ET.parse(xml_file_path)
+        root = tree.getroot()
+
+        # Process each book separately
+        for book in root.findall(".//tei:div[@type='book']", NAMESPACE):
+            book_title_element = book.find("tei:head", NAMESPACE)  # Find book title
+            book_title = book_title_element.text.strip() if book_title_element is not None else "Unknown_Book"
+
+            # File names
+            book_filename_clean = f"{book_title.replace(' ', '_')}_nlp_ready.txt"
+            book_filename_variants = f"{book_title.replace(' ', '_')}_variants.jsonl"
+            book_filename_marginal_notes = f"{book_title.replace(' ', '_')}_marginal_notes.jsonl"
+            book_filename_human_readable = f"{book_title.replace(' ', '_')}_human_readable.txt"
+
+            book_texts = []
+            human_readable_texts = []
+            variant_entries = []
+            marginal_note_entries = []
+
+            # Extract Greek text from paragraphs within the book
+            for paragraph in book.findall(".//tei:p", NAMESPACE):
+                verse_text = []
+                
+                # Iterate over elements inside <p> (words & punctuation)
+                for element in paragraph:
+                    if element.tag in ["{http://www.tei-c.org/ns/1.0}lb", "{http://www.tei-c.org/ns/1.0}pb"]:
+                        # Preserve line breaks and page breaks for human-readable text
+                        verse_text.append(f"[{element.tag} {element.attrib.get('n', '?')}] ")
+                    elif element.tag == "{http://www.tei-c.org/ns/1.0}note":
+                        # Handle text-critical notes separately
+                        note_type = element.attrib.get("type", "")
+                        note_text = "".join(element.itertext()).strip()
+                        cleaned_note = extract_greek_text(note_text)
+
+                        if cleaned_note:
+                            if note_type == "marginal":
+                                marginal_note_entries.append(json.dumps({
+                                    "book": book_title,
+                                    "note": cleaned_note
+                                }, ensure_ascii=False))
+                            elif note_type == "footnote":
+                                variant_entries.append(json.dumps({
+                                    "book": book_title,
+                                    "context": "Footnote",
+                                    "variants": [cleaned_note]
+                                }, ensure_ascii=False))
+                    elif element.tag == "{http://www.tei-c.org/ns/1.0}milestone":
+                        # Capture verse references (e.g., stored in parentheses or brackets)
+                        verse_ref = element.attrib.get("n", "?")
+                        verse_text.append(f"({verse_ref}) ")
+                    else:
+                        # Extract text (words & punctuation together)
+                        text = "".join(element.itertext()).strip()
+                        if text:
+                            verse_text.append(text)
+
+                # Join words and punctuation properly
+                full_text = " ".join(verse_text).strip()
+                cleaned_text = extract_greek_text(full_text)
+                
+                # Extract text-critical variants
+                variants = extract_variants(cleaned_text)
+                
+                # Store variants separately with context
+                if variants:
+                    variant_entries.append(json.dumps({
+                        "book": book_title,
+                        "context": full_text,
+                        "variants": variants
+                    }, ensure_ascii=False))
+
+                # Remove bracketed text for the clean NLP version
+                cleaned_text_nlp = re.sub(r"\[.*?\]", "", cleaned_text).strip()
+                if cleaned_text_nlp:
+                    book_texts.append(cleaned_text_nlp)
+
+                # Add paragraph to the human-readable version, keeping brackets for variants
+                human_readable_texts.append(full_text)
+
+            # Append results to existing files (since XML is split into parts)
+            with open(os.path.join(output_dir, book_filename_clean), "a", encoding="utf-8") as f:
+                f.write("\n".join(book_texts) + "\n")
+
+            with open(os.path.join(output_dir, book_filename_human_readable), "a", encoding="utf-8") as f:
+                f.write("\n".join(human_readable_texts) + "\n")
+
+            if variant_entries:
+                with open(os.path.join(output_dir, book_filename_variants), "a", encoding="utf-8") as f:
+                    f.write("\n".join(variant_entries) + "\n")
+
+            if marginal_note_entries:
+                with open(os.path.join(output_dir, book_filename_marginal_notes), "a", encoding="utf-8") as f:
+                    f.write("\n".join(marginal_note_entries) + "\n")
+
+            print(f"Processed: {book_title}")
+
+    print("Processing complete! Cleaned texts, variants, and marginal notes saved separately.")
+#+end_src
+
+#+RESULTS:
+: Processing: /home/gnosis/Documents/au_work/main/corpora/opensource/swete_sep/old_testament_1901_vol1.xml
+: Processing: /home/gnosis/Documents/au_work/main/corpora/opensource/swete_sep/old_testament_1891_vol2.xml
+: Processing: /home/gnosis/Documents/au_work/main/corpora/opensource/swete_sep/old_testament_1930_vol3.xml
+: Processing complete! Cleaned texts, variants, and marginal notes saved separately.
+
+
+*** Same, but punctuation included
+#+begin_src python :results output
+  import xml.etree.ElementTree as ET
+  import re
+  import os
+  import json
+  from glob import glob  # Allows processing multiple XML files
+
+  # Define input and output directories
+  xml_files = glob("/home/gnosis/Documents/au_work/main/corpora/opensource/swete_sep/*.xml")
+  # Folder containing the split XML parts
+  output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/Swete_punct"
+  os.makedirs(output_dir, exist_ok=True)  # Ensure output directory exists
+
+  # Define TEI XML namespace
+  NAMESPACE = {"tei": "http://www.tei-c.org/ns/1.0"}
+
+  # Function to clean and extract only Ancient Greek text (preserving punctuation)
+  def extract_greek_text(text):
+      """Removes all non-Greek characters except punctuation and diacritics."""
+      return re.sub(r"[^\u0370-\u03FF\u1F00-\u1FFF\s.,;·()\[\]]", "", text).strip()
+
+  # Function to extract bracketed text as variants
+  def extract_variants(text):
+      """Finds bracketed text and returns a list of text-critical variants."""
+      return re.findall(r"\[(.*?)\]", text)  # Extract text inside brackets
+
+  # Process each XML file separately
+  for xml_file_path in xml_files:
+      print(f"Processing: {xml_file_path}")
+      
+      # Load and parse the XML file
+      tree = ET.parse(xml_file_path)
+      root = tree.getroot()
+
+      # Process each chapter separately
+      for chapter in root.findall(".//tei:div[@type='textpart'][@subtype='chapter']", NAMESPACE):
+          # Extract book title from <head>
+          book_title_element = chapter.find("tei:head", NAMESPACE)
+          book_title = book_title_element.text.strip() if book_title_element is not None else "Unknown_Book"
+
+          # File names
+          book_filename_clean = os.path.join(output_dir, f"{book_title.replace(' ', '_')}_nlp_ready.txt")
+          book_filename_variants = os.path.join(output_dir, f"{book_title.replace(' ', '_')}_variants.jsonl")
+          book_filename_marginal_notes = os.path.join(output_dir, f"{book_title.replace(' ', '_')}_marginal_notes.jsonl")
+          book_filename_human_readable = os.path.join(output_dir, f"{book_title.replace(' ', '_')}_human_readable.txt")
+
+          book_texts = []
+          human_readable_texts = []
+          variant_entries = []
+          marginal_note_entries = []
+
+          # Extract Greek text from paragraphs within the chapter
+          for paragraph in chapter.findall(".//tei:p", NAMESPACE):
+              verse_text = []
+              chapter_number = None
+
+              # Iterate over elements inside <p> (words, punctuation, references)
+              for element in paragraph:
+                  if element.tag == "{http://www.tei-c.org/ns/1.0}lb":
+                      # Preserve verse numbers
+                      verse_text.append(f"[{element.attrib.get('n', '?')}] ")
+                  elif element.tag == "{http://www.tei-c.org/ns/1.0}note":
+                      note_type = element.attrib.get("type", "")
+                      note_text = "".join(element.itertext()).strip()
+                      cleaned_note = extract_greek_text(note_text)
+
+                      if note_type == "marginal":
+                          # Some marginal notes contain chapter numbers in Roman numerals
+                          if re.match(r"^[IVXLCDM]+$", cleaned_note):  
+                              chapter_number = cleaned_note  # Store Roman numeral chapter
+                          marginal_note_entries.append(json.dumps({
+                              "book": book_title,
+                              "note": cleaned_note
+                          }, ensure_ascii=False))
+                      elif note_type == "footnote":
+                          variant_entries.append(json.dumps({
+                              "book": book_title,
+                              "context": "Footnote",
+                              "variants": [cleaned_note]
+                          }, ensure_ascii=False))
+                  else:
+                      # Extract main text
+                      text = "".join(element.itertext()).strip()
+                      if text:
+                          verse_text.append(text)
+
+              # Join words and punctuation properly
+              full_text = " ".join(verse_text).strip()
+              cleaned_text = extract_greek_text(full_text)
+              
+              # Extract text-critical variants
+              variants = extract_variants(cleaned_text)
+              
+              # Store variants separately with context
+              if variants:
+                  variant_entries.append(json.dumps({
+                      "book": book_title,
+                      "context": full_text,
+                      "variants": variants
+                  }, ensure_ascii=False))
+
+              # Remove bracketed text for the clean NLP version
+              cleaned_text_nlp = re.sub(r"\[.*?\]", "", cleaned_text).strip()
+              if cleaned_text_nlp:
+                  book_texts.append(cleaned_text_nlp)
+
+              # Format human-readable text with chapter & verse info
+              formatted_text = f"{book_title} {chapter_number if chapter_number else ''} {full_text}"
+              human_readable_texts.append(formatted_text)
+
+          # **Write output files**
+          if book_texts:
+              with open(book_filename_clean, "a", encoding="utf-8") as f:
+                  f.write("\n".join(book_texts) + "\n")
+              print(f"Saved: {book_filename_clean}")
+
+          if human_readable_texts:
+              with open(book_filename_human_readable, "a", encoding="utf-8") as f:
+                  f.write("\n".join(human_readable_texts) + "\n")
+              print(f"Saved: {book_filename_human_readable}")
+
+          if variant_entries:
+              with open(book_filename_variants, "a", encoding="utf-8") as f:
+                  f.write("\n".join(variant_entries) + "\n")
+              print(f"Saved: {book_filename_variants}")
+
+          if marginal_note_entries:
+              with open(book_filename_marginal_notes, "a", encoding="utf-8") as f:
+                  f.write("\n".join(marginal_note_entries) + "\n")
+              print(f"Saved: {book_filename_marginal_notes}")
+
+          print(f"Processed: {book_title}")
+
+  print("Processing complete! Cleaned texts, variants, and marginal notes saved separately.")
+#+end_src
+
 ** Eliranwong - LXX, Rahlf
 - From [[https://github.com/eliranwong/LXX-Rahlfs-1935/tree/master/11_end-users_files/MyBible/Bibles][Github, "Mybibles", final main & books]]
 
@@ -224,55 +565,181 @@ print("Processing complete! Cleaned texts, variants, and marginal notes saved se
 #+end_src
 *** Script for extraction according to Book, resulting in human-readable text & NLP-friendly text
 #+begin_src python
-import pandas as pd
-import re
+  import pandas as pd
+  import re
+  import os
 
-# Load the CSV file
-file_path = "/home/gnosis/Documents/au_work/main/corpora/opensource/rahfl_eliranwong/LXX_final_main.csv"
-df = pd.read_csv(file_path, encoding="utf-8")
+  # Load the CSV file
+  file_path = "/home/gnosis/Documents/au_work/main/corpora/opensource/rahfl_eliranwong/LXX_final_main.csv"
+  df = pd.read_csv(file_path, encoding="utf-8")
 
-# Mapping book codes to names
-book_mapping = {
-    "10": "Genesis", "20": "Exodus", "30": "Leviticus", "40": "Numbers", "50": "Deuteronomy",
-    "60": "Joshua_B", "70": "Judges_B", "80": "Ruth", "90": "1_Samuel", "100": "2_Samuel",
-    "110": "1_Kings", "120": "2_Kings", "130": "1_Chronicles", "140": "2_Chronicles", "150": "Ezra",
-    "160": "Nehemiah", "190": "Esther", "220": "Job", "230": "Psalms", "240": "Proverbs",
-    "250": "Ecclesiastes", "260": "Song_of_Solomon", "290": "Isaiah", "300": "Jeremiah",
-    "310": "Lamentations", "330": "Ezekiel", "340": "Daniel_LXX", "350": "Hosea", "360": "Joel",
-    "370": "Amos", "380": "Obadiah", "390": "Jonah", "400": "Micah", "410": "Nahum",
-    "420": "Habakkuk", "430": "Zephaniah", "440": "Haggai", "450": "Zechariah", "460": "Malachi",
-    "165": "1_Esdras", "170": "Tobit_BA", "180": "Judith", "232": "Psalms_of_Solomon",
-    "462": "1_Maccabees", "464": "2_Maccabees", "466": "3_Maccabees", "467": "4_Maccabees",
-    "270": "Wisdom_of_Solomon", "280": "Wisdom_of_Sirach", "315": "Epistle_of_Jeremiah",
-    "320": "Baruch", "325": "Susanna_LXX", "345": "Bel_LXX", "800": "Odes"
-}
+  # Output directory
+  output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/Rahfl_LXX"
+  os.makedirs(output_dir, exist_ok=True)  # Ensure the folder exists
 
-# Initialize storage for books
-human_readable_books = {book: [] for book in book_mapping.values()}
-nlp_text_books = {book: [] for book in book_mapping.values()}
+  # Mapping book codes to names
+  book_mapping = {
+      "10": "Genesis", "20": "Exodus", "30": "Leviticus", "40": "Numbers", "50": "Deuteronomy",
+      "60": "Joshua_B", "70": "Judges_B", "80": "Ruth", "90": "1_Samuel", "100": "2_Samuel",
+      "110": "1_Kings", "120": "2_Kings", "130": "1_Chronicles", "140": "2_Chronicles", "150": "Ezra",
+      "160": "Nehemiah", "190": "Esther", "220": "Job", "230": "Psalms", "240": "Proverbs",
+      "250": "Ecclesiastes", "260": "Song_of_Solomon", "290": "Isaiah", "300": "Jeremiah",
+      "310": "Lamentations", "330": "Ezekiel", "340": "Daniel_LXX", "350": "Hosea", "360": "Joel",
+      "370": "Amos", "380": "Obadiah", "390": "Jonah", "400": "Micah", "410": "Nahum",
+      "420": "Habakkuk", "430": "Zephaniah", "440": "Haggai", "450": "Zechariah", "460": "Malachi",
+      "165": "1_Esdras", "170": "Tobit_BA", "180": "Judith", "232": "Psalms_of_Solomon",
+      "462": "1_Maccabees", "464": "2_Maccabees", "466": "3_Maccabees", "467": "4_Maccabees",
+      "270": "Wisdom_of_Solomon", "280": "Wisdom_of_Sirach", "315": "Epistle_of_Jeremiah",
+      "320": "Baruch", "325": "Susanna_LXX", "345": "Bel_LXX", "800": "Odes"
+  }
 
-# Process each row
-for row in df.iloc[:, 0]:
-    parts = row.split("\t")
-    if len(parts) < 4:
-        continue  # Skip malformed rows
+  # Initialize storage for books
+  human_readable_books = {book: [] for book in book_mapping.values()}
+  nlp_text_books = {book: [] for book in book_mapping.values()}
 
-    book_code, chapter, verse = parts[:3]
-    greek_text = re.sub(r"<S>\d+</S>|<m>.*?</m>", "", parts[3])  # Remove markers
-    greek_text_human = re.sub(r"<.*?>", "", greek_text)  # Remove remaining XML-like markup
-    greek_text_nlp = re.sub(r"[^\u0370-\u03FF\u1F00-\u1FFF\s]", "", greek_text)  # Keep only Greek characters and diacritics
+  # Process each row
+  for row in df.iloc[:, 0]:
+      parts = row.split("\t")
+      if len(parts) < 4:
+          continue  # Skip malformed rows
 
-    if book_code in book_mapping:
-        book_name = book_mapping[book_code]
-        human_readable_books[book_name].append(f"{book_code}:{chapter}:{verse} {greek_text_human}")
-        nlp_text_books[book_name].append(greek_text_nlp)
+      book_code, chapter, verse = parts[:3]
+      greek_text = re.sub(r"<S>\d+</S>|<m>.*?</m>", "", parts[3])  # Remove markers
+      greek_text_human = re.sub(r"<.*?>", "", greek_text)  # Remove remaining XML-like markup
+      greek_text_nlp = re.sub(r"[^\u0370-\u03FF\u1F00-\u1FFF\s]", "", greek_text)  # Keep only Greek characters and diacritics
 
-# Save outputs
-for book, content in human_readable_books.items():
-    with open(f"{book}_human_readable.txt", "w", encoding="utf-8") as f:
-        f.write("\n".join(content))
+      if book_code in book_mapping:
+          book_name = book_mapping[book_code]
+          human_readable_books[book_name].append(f"{book_code}:{chapter}:{verse} {greek_text_human}")
+          nlp_text_books[book_name].append(greek_text_nlp)
+  # Save outputs in the output directory
+  for book, content in human_readable_books.items():
+      if content:  # Only save if content exists
+          file_path = os.path.join(output_dir, f"{book}_human_readable.txt")
+          with open(file_path, "w", encoding="utf-8") as f:
+              f.write("\n".join(content))
+          print(f"Saved: {file_path}")
 
-for book, content in nlp_text_books.items():
-    with open(f"{book}_nlp_ready.txt", "w", encoding="utf-8") as f:
-        f.write("\n".join(content))
+  for book, content in nlp_text_books.items():
+      if content:  # Only save if content exists
+          file_path = os.path.join(output_dir, f"{book}_nlp_ready.txt")
+          with open(file_path, "w", encoding="utf-8") as f:
+              f.write("\n".join(content))
+          print(f"Saved: {file_path}")
+
+  print(f"Processing complete! Files saved in '{output_dir}'")
 #+end_src
+
+#+RESULTS:
+: None
+** Brenton, LXX - USFX
+
+*** Script for extraction resulting in human-readable text & NLP-friendly text - with punctuation
+
+#+begin_src python :results output
+  from lxml import etree
+  import re
+  import os
+
+  # Define input USFX file
+  usfx_file = "/home/gnosis/Documents/au_work/main/corpora/opensource/brent_sep/grcbrent_usfx/grcbrent_usfx.xml"  # input usfx
+
+  # Define output directories
+  output_dir_nlp = "/home/gnosis/Documents/au_work/main/corpora/extract/brent_punct"
+  output_dir_human = "/home/gnosis/Documents/au_work/main/corpora/extract/brent_punct_human"
+
+  # Ensure output directories exist
+  os.makedirs(output_dir_nlp, exist_ok=True)
+  os.makedirs(output_dir_human, exist_ok=True)
+
+
+  # Function to extract Greek text while keeping punctuation
+  def extract_greek_text(text):
+      cleaned = re.sub(r"[^\u0370-\u03FF\u1F00-\u1FFF\s.,;·]", "", text).strip()
+      return cleaned
+
+  # # Book name mapping
+  # book_mapping = {
+  #     "GEN": "ΓΕΝΕΣΙΣ", "EXO": "ΕΞΟΔΟΣ", "LEV": "ΛΕΥΙΤΙΚΟΝ", "NUM": "ΑΡΙΘΜΟΙ",
+  #     "DEU": "ΔΕΥΤΕΡΟΝΟΜΙΟΝ", "JOS": "ΙΗΣΟΥΣ ΝΑΥΗ", "JDG": "ΚΡΙΤΑΙ", "RUT": "ΡΟΥΘ",
+  #     "1SA": "ΒΑΣΙΛΕΙΩΝ Α", "2SA": "ΒΑΣΙΛΕΙΩΝ Β", "1KI": "ΒΑΣΙΛΕΙΩΝ Γ", "2KI": "ΒΑΣΙΛΕΙΩΝ Δ",
+  #     "PSA": "ΨΑΛΜΟΙ", "PRO": "ΠΑΡΟΙΜΙΑΙ", "ECC": "ΕΚΚΛΗΣΙΑΣΤΗΣ", "ISA": "ΗΣΑΙΑΣ",
+  # }
+
+  # Load the USFX XML file using lxml
+  tree = etree.parse(usfx_file)
+  root = tree.getroot()
+
+  # Process each book
+  for book in root.findall("./book"):
+      book_code = book.get("id", "UNKNOWN")
+      book_name = book_code  # Just use the ID as the book name
+      
+      book_nlp_text = []
+      book_human_text = []
+
+      print(f"🔍 Processing book: {book_code} ({book_name})")
+
+      # Process paragraphs that contain verses
+      for paragraph in book.findall(".//p"):
+              paragraph_nlp = []
+              paragraph_human = []
+
+              for verse in paragraph.findall(".//v"):
+                  verse_bcv = verse.get("bcv", "?")  # Example: JON.1.1
+                  verse_parts = verse_bcv.split(".")  # Split into ["JON", "1", "1"]
+
+                  # Convert to "1:1" format if properly structured
+                  if len(verse_parts) == 3:
+                      verse_num = f"{verse_parts[1]}:{verse_parts[2]}"
+                  else:
+                      verse_num = verse_bcv  # Fallback in case of incorrect format
+
+                  # Extract text from the verse node and its tail
+                  raw_text = (verse.text or "") + (verse.tail or "")
+
+                  if not raw_text.strip():
+                      print(f"⚠️ Warning: No text found for verse {verse_num} in {book_name}")
+
+                  cleaned_text = extract_greek_text(raw_text)
+
+                  if cleaned_text:
+                      paragraph_nlp.append(cleaned_text)
+                      paragraph_human.append(f"{verse_num} {cleaned_text}")
+                  else:
+                      print(f"⚠️ Empty cleaned text for {verse_num} in {book_name}")
+
+                  # Handle <ve /> nodes for human-readable version
+                  next_node = verse.getnext()
+                  if next_node is not None and next_node.tag == "ve":
+                      paragraph_human.append("\n")  # Insert line break after a verse
+
+              # Add processed paragraph text
+              if paragraph_nlp:
+                  book_nlp_text.append(" ".join(paragraph_nlp))  # Keep NLP-friendly text per paragraph
+              if paragraph_human:
+                  book_human_text.extend(paragraph_human)  # Keep human-readable format with verse numbers
+
+
+      # **Write output once per book**
+      if book_nlp_text:
+          print(f"📝 Writing {len(book_nlp_text)} NLP-ready lines for {book_name}")
+          print("NLP content example:", book_nlp_text[:3])  # Print first 3 lines
+
+          output_file_nlp = os.path.join(output_dir_nlp, f"{book_name}_nlp_ready.txt")
+          with open(output_file_nlp, "w", encoding="utf-8") as f:
+              f.write("\n".join(book_nlp_text) + "\n")  # Ensure new line at end of file
+          print(f"✅ Saved NLP version: {output_file_nlp}")
+
+      if book_human_text:
+          print(f"📖 Writing {len(book_human_text)} human-readable lines for {book_name}")
+          print("Human-readable content example:", book_human_text[:3])  # Print first 3 lines
+
+          output_file_human = os.path.join(output_dir_human, f"{book_name}_human_readable.txt")
+          with open(output_file_human, "w", encoding="utf-8") as f:
+              f.write("\n".join(book_human_text) + "\n")  # Ensure new line at end of file
+          print(f"✅ Saved human-friendly version: {output_file_human}")
+
+  print(f"🎉 Processing complete! Check the output folders:\n- NLP Ready: {output_dir_nlp}\n- Human Readable: {output_dir_human}")
+#+end_src
+
