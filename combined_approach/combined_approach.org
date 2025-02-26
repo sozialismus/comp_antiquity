@@ -63,16 +63,14 @@
 #+end_src
 ** Code - using babel to switch environments
 *** Running proiel_trf - full text
-#+BEGIN_SRC python :session proiel_trf :results output
+#+BEGIN_SRC python :session proiel_trf :results output :var dataset="1"
 import os
 os.system("conda run -n proiel_trf python ~/Documents/au_work/main/comp_antiquity/combined_approach/run_proiel_trf.py")
 #+END_SRC
 
-
-
 *** Running proiel_ner - full text
 
-#+BEGIN_SRC python :session ner :results output :eval never
+#+BEGIN_SRC python :session ner :results output :var dataset="1"
 import os
 os.system("conda run -n ner python ~/Documents/au_work/main/comp_antiquity/combined_approach/run_ner.py")
 #+END_SRC
@@ -162,100 +160,304 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
 #+end_src
 
 #+RESULTS:
-**** nyt forsøg
+**** nyt forsøg - saves with ID in continuous count - not integer=1
 
 #+begin_src python :results output
-  import os
-  import json
-  import re  # ✅ Regex for flexible filename matching
+   import os
+   import json
+   import re  # ✅ Regex for flexible filename matching
 
-  input_folder = "/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results"
-  # debug - check files are actually located in input
-  # files = os.listdir(input_folder)
-  # print("📂 Files in input folder:", files)
-  output_folder = "/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results_conllu"
+   input_folder = "/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis"
+   # debug - check files are actually located in input
+   # files = os.listdir(input_folder)
+   # print("📂 Files in input folder:", files)
+   output_folder = "/home/gnosis/Documents/au_work/main/results/brent"
 
-  os.makedirs(output_folder, exist_ok=True)
+   os.makedirs(output_folder, exist_ok=True)
 
-  # Collect all .json files (assuming they are NDJSON)
-  json_files = [f for f in os.listdir(input_folder) if f.endswith(".json")]
+   # Collect all .json files (assuming they are NDJSON)
+   json_files = [f for f in os.listdir(input_folder) if f.endswith(".json")]
 
-  # Find matching _trf.json and _ner.json files
-  file_pairs = {}
-  for filename in json_files:
-      # Remove `_trf.json` or `_ner.json` to get the base name
-      base_name = re.sub(r"(_trf|_ner)\.json$", "", filename)
-      print(f"Processing file: {filename} → Base name detected: {base_name}")
+   # Find matching _trf.json and _ner.json files
+   file_pairs = {}
+   for filename in json_files:
+       # Remove `_trf.json` or `_ner.json` to get the base name
+       base_name = re.sub(r"(_trf|_ner)\.json$", "", filename)
+       print(f"Processing file: {filename} → Base name detected: {base_name}")
 
-      if base_name not in file_pairs:
-          file_pairs[base_name] = {}
+       if base_name not in file_pairs:
+           file_pairs[base_name] = {}
 
-      if filename.endswith("_trf.json"):
-          file_pairs[base_name]["trf"] = os.path.join(input_folder, filename)
-      elif filename.endswith("_ner.json"):
-          file_pairs[base_name]["ner"] = os.path.join(input_folder, filename)
+       if filename.endswith("_trf.json"):
+           file_pairs[base_name]["trf"] = os.path.join(input_folder, filename)
+       elif filename.endswith("_ner.json"):
+           file_pairs[base_name]["ner"] = os.path.join(input_folder, filename)
 
-  # Debugging: Print detected file pairs
-  print(f"🔍 Detected file pairs: {file_pairs}")
+   # Debugging: Print detected file pairs
+   print(f"🔍 Detected file pairs: {file_pairs}")
 
-  # Merge TRF and NER files into CoNLL-U format
-  for base_name, paths in file_pairs.items():
-      if "trf" not in paths or "ner" not in paths:
-          print(f"⚠️ Warning: Missing TRF or NER file for {base_name}, skipping merge.")
-          continue
+   # Merge TRF and NER files into CoNLL-U format
+   for base_name, paths in file_pairs.items():
+       if "trf" not in paths or "ner" not in paths:
+           print(f"⚠️ Warning: Missing TRF or NER file for {base_name}, skipping merge.")
+           continue
 
-      trf_path = paths["trf"]
-      ner_path = paths["ner"]
-      conllu_filename = os.path.join(output_folder, base_name + ".conllu")
+       trf_path = paths["trf"]
+       ner_path = paths["ner"]
+       conllu_filename = os.path.join(output_folder, base_name + ".conllu")
 
-      with open(trf_path, "r", encoding="utf-8") as trf_file, \
-           open(ner_path, "r", encoding="utf-8") as ner_file, \
-           open(conllu_filename, "w", encoding="utf-8") as conllu_file:
+       with open(trf_path, "r", encoding="utf-8") as trf_file, \
+            open(ner_path, "r", encoding="utf-8") as ner_file, \
+            open(conllu_filename, "w", encoding="utf-8") as conllu_file:
 
-          conllu_file.write("# This file follows Universal Dependencies format\n\n")
+           conllu_file.write("# This file follows Universal Dependencies format\n\n")
 
-          # Read NDJSON line-by-line
-          trf_data = {entry["id"]: entry for entry in map(json.loads, trf_file)}
-          ner_data = {entry["id"]: entry for entry in map(json.loads, ner_file)}
+           # Read NDJSON line-by-line
+           trf_data = {entry["id"]: entry for entry in map(json.loads, trf_file)}
+           ner_data = {entry["id"]: entry for entry in map(json.loads, ner_file)}
 
-          # Debugging: Check if data is being read
-          print(f"📄 Processing {base_name}: {len(trf_data)} tokens found in TRF")
-          print(f"📄 Processing {base_name}: {len(ner_data)} tokens found in NER")
+           # Debugging: Check if data is being read
+           print(f"📄 Processing {base_name}: {len(trf_data)} tokens found in TRF")
+           print(f"📄 Processing {base_name}: {len(ner_data)} tokens found in NER")
 
-          # Merge TRF and NER based on "id"
-          for token_id in sorted(trf_data.keys()):  # Ensure correct order
-              trf_entry = trf_data[token_id]
-              ner_entry = ner_data.get(token_id, {"ner": "O"})  # Default to "O"
+           # Merge TRF and NER based on "id"
+           for token_id in sorted(trf_data.keys()):  # Ensure correct order
+               trf_entry = trf_data[token_id]
+               ner_entry = ner_data.get(token_id, {"ner": "O"})  # Default to "O"
 
-              # ✅ Extract token attributes
-              form = trf_entry.get("text", "_")
-              lemma = trf_entry.get("lemma", "_")
-              upos = trf_entry.get("upos", "_")
-              xpos = "_"
-              feats = trf_entry.get("feats", "_")
-              head = trf_entry.get("head", 0)
-              deprel = trf_entry.get("dep", "_")
-              deps = trf_entry.get("deps", "_")
-              ner_label = ner_entry.get("ner", "O")
+               # ✅ Extract token attributes
+               form = trf_entry.get("text", "_")
+               lemma = trf_entry.get("lemma", "_")
+               upos = trf_entry.get("upos", "_")
+               xpos = "_"
+               feats = trf_entry.get("feats", "_")
+               head = trf_entry.get("head", 0)
+               deprel = trf_entry.get("dep", "_")
+               deps = trf_entry.get("deps", "_")
+               ner_label = ner_entry.get("ner", "O")
 
-              # 🏷️ Store Named Entity Label in MISC
-              misc_field = f"NER={ner_label}" if ner_label != "O" else "_"
+               # 🏷️ Store Named Entity Label in MISC
+               misc_field = f"NER={ner_label}" if ner_label != "O" else "_"
 
-              # 📌 Append token data to CoNLL-U format
-              conllu_row = [token_id, form, lemma, upos, xpos, feats, head, deprel, deps, misc_field]
-              conllu_file.write("\t".join(map(str, conllu_row)) + "\n")
+               # 📌 Append token data to CoNLL-U format
+               conllu_row = [token_id, form, lemma, upos, xpos, feats, head, deprel, deps, misc_field]
+               conllu_file.write("\t".join(map(str, conllu_row)) + "\n")
 
-          conllu_file.write("\n")  # Separate sentences with a blank line
+           conllu_file.write("\n")  # Separate sentences with a blank line
 
-  print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
+   print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
 #+end_src
 
 #+RESULTS:
-: 🔍 Detected file pairs: {'NA28-050PHP': {'trf': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-050PHP_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-050PHP_ner.json'}, 'NA28-041MRK': {'trf': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-041MRK_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-041MRK_ner.json'}, 'NA28-044ACT': {'trf': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-044ACT_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-044ACT_ner.json'}, 'NA28-0601PE': {'trf': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-0601PE_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/NA28-0601PE_ner.json'}, 'SEP-001GEN': {'trf': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/SEP-001GEN_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/SEP-001GEN_ner.json'}, 'SEP-007JDG': {'trf': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/SEP-007JDG_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/corpora/trf_ner_v2_results/SEP-007JDG_ner.json'}}
-: 📄 Processing NA28-050PHP: 1882 tokens found in TRF
-: 📄 Processing NA28-041MRK: 2275 tokens found in TRF
-: 📄 Processing NA28-044ACT: 2229 tokens found in TRF
-: 📄 Processing NA28-0601PE: 1894 tokens found in TRF
-: 📄 Processing SEP-001GEN: 2227 tokens found in TRF
-: 📄 Processing SEP-007JDG: 2192 tokens found in TRF
-: ✅ Merged proiel_trf and NER outputs into CoNLL-U format.
+#+begin_example
+Processing file: GEN_nlp_ready_ner.json → Base name detected: GEN_nlp_ready
+Processing file: EXO_nlp_ready_ner.json → Base name detected: EXO_nlp_ready
+Processing file: LEV_nlp_ready_ner.json → Base name detected: LEV_nlp_ready
+Processing file: NUM_nlp_ready_ner.json → Base name detected: NUM_nlp_ready
+Processing file: DEU_nlp_ready_ner.json → Base name detected: DEU_nlp_ready
+Processing file: JOS_nlp_ready_ner.json → Base name detected: JOS_nlp_ready
+Processing file: JDG_nlp_ready_ner.json → Base name detected: JDG_nlp_ready
+Processing file: RUT_nlp_ready_ner.json → Base name detected: RUT_nlp_ready
+Processing file: 1SA_nlp_ready_ner.json → Base name detected: 1SA_nlp_ready
+Processing file: 2SA_nlp_ready_ner.json → Base name detected: 2SA_nlp_ready
+Processing file: 1KI_nlp_ready_ner.json → Base name detected: 1KI_nlp_ready
+Processing file: 2KI_nlp_ready_ner.json → Base name detected: 2KI_nlp_ready
+Processing file: 1CH_nlp_ready_ner.json → Base name detected: 1CH_nlp_ready
+Processing file: 2CH_nlp_ready_ner.json → Base name detected: 2CH_nlp_ready
+Processing file: EZR_nlp_ready_ner.json → Base name detected: EZR_nlp_ready
+Processing file: JOB_nlp_ready_ner.json → Base name detected: JOB_nlp_ready
+Processing file: PSA_nlp_ready_ner.json → Base name detected: PSA_nlp_ready
+Processing file: PRO_nlp_ready_ner.json → Base name detected: PRO_nlp_ready
+Processing file: ECC_nlp_ready_ner.json → Base name detected: ECC_nlp_ready
+Processing file: SNG_nlp_ready_ner.json → Base name detected: SNG_nlp_ready
+Processing file: ISA_nlp_ready_ner.json → Base name detected: ISA_nlp_ready
+Processing file: JER_nlp_ready_ner.json → Base name detected: JER_nlp_ready
+Processing file: LAM_nlp_ready_ner.json → Base name detected: LAM_nlp_ready
+Processing file: EZK_nlp_ready_ner.json → Base name detected: EZK_nlp_ready
+Processing file: HOS_nlp_ready_ner.json → Base name detected: HOS_nlp_ready
+Processing file: JOL_nlp_ready_ner.json → Base name detected: JOL_nlp_ready
+Processing file: AMO_nlp_ready_ner.json → Base name detected: AMO_nlp_ready
+Processing file: OBA_nlp_ready_ner.json → Base name detected: OBA_nlp_ready
+Processing file: JON_nlp_ready_ner.json → Base name detected: JON_nlp_ready
+Processing file: MIC_nlp_ready_ner.json → Base name detected: MIC_nlp_ready
+Processing file: NAM_nlp_ready_ner.json → Base name detected: NAM_nlp_ready
+Processing file: HAB_nlp_ready_ner.json → Base name detected: HAB_nlp_ready
+Processing file: ZEP_nlp_ready_ner.json → Base name detected: ZEP_nlp_ready
+Processing file: HAG_nlp_ready_ner.json → Base name detected: HAG_nlp_ready
+Processing file: ZEC_nlp_ready_ner.json → Base name detected: ZEC_nlp_ready
+Processing file: MAL_nlp_ready_ner.json → Base name detected: MAL_nlp_ready
+Processing file: TOB_nlp_ready_ner.json → Base name detected: TOB_nlp_ready
+Processing file: JDT_nlp_ready_ner.json → Base name detected: JDT_nlp_ready
+Processing file: ESG_nlp_ready_ner.json → Base name detected: ESG_nlp_ready
+Processing file: WIS_nlp_ready_ner.json → Base name detected: WIS_nlp_ready
+Processing file: SIR_nlp_ready_ner.json → Base name detected: SIR_nlp_ready
+Processing file: BAR_nlp_ready_ner.json → Base name detected: BAR_nlp_ready
+Processing file: LJE_nlp_ready_ner.json → Base name detected: LJE_nlp_ready
+Processing file: SUS_nlp_ready_ner.json → Base name detected: SUS_nlp_ready
+Processing file: BEL_nlp_ready_ner.json → Base name detected: BEL_nlp_ready
+Processing file: 1MA_nlp_ready_ner.json → Base name detected: 1MA_nlp_ready
+Processing file: 2MA_nlp_ready_ner.json → Base name detected: 2MA_nlp_ready
+Processing file: 1ES_nlp_ready_ner.json → Base name detected: 1ES_nlp_ready
+Processing file: MAN_nlp_ready_ner.json → Base name detected: MAN_nlp_ready
+Processing file: 3MA_nlp_ready_ner.json → Base name detected: 3MA_nlp_ready
+Processing file: 4MA_nlp_ready_ner.json → Base name detected: 4MA_nlp_ready
+Processing file: DAG_nlp_ready_ner.json → Base name detected: DAG_nlp_ready
+Processing file: GEN_nlp_ready_trf.json → Base name detected: GEN_nlp_ready
+Processing file: EXO_nlp_ready_trf.json → Base name detected: EXO_nlp_ready
+Processing file: LEV_nlp_ready_trf.json → Base name detected: LEV_nlp_ready
+Processing file: NUM_nlp_ready_trf.json → Base name detected: NUM_nlp_ready
+Processing file: DEU_nlp_ready_trf.json → Base name detected: DEU_nlp_ready
+Processing file: JOS_nlp_ready_trf.json → Base name detected: JOS_nlp_ready
+Processing file: JDG_nlp_ready_trf.json → Base name detected: JDG_nlp_ready
+Processing file: RUT_nlp_ready_trf.json → Base name detected: RUT_nlp_ready
+Processing file: 1SA_nlp_ready_trf.json → Base name detected: 1SA_nlp_ready
+Processing file: 2SA_nlp_ready_trf.json → Base name detected: 2SA_nlp_ready
+Processing file: 1KI_nlp_ready_trf.json → Base name detected: 1KI_nlp_ready
+Processing file: 2KI_nlp_ready_trf.json → Base name detected: 2KI_nlp_ready
+Processing file: 1CH_nlp_ready_trf.json → Base name detected: 1CH_nlp_ready
+Processing file: 2CH_nlp_ready_trf.json → Base name detected: 2CH_nlp_ready
+Processing file: EZR_nlp_ready_trf.json → Base name detected: EZR_nlp_ready
+Processing file: JOB_nlp_ready_trf.json → Base name detected: JOB_nlp_ready
+Processing file: PSA_nlp_ready_trf.json → Base name detected: PSA_nlp_ready
+Processing file: PRO_nlp_ready_trf.json → Base name detected: PRO_nlp_ready
+Processing file: ECC_nlp_ready_trf.json → Base name detected: ECC_nlp_ready
+Processing file: SNG_nlp_ready_trf.json → Base name detected: SNG_nlp_ready
+Processing file: ISA_nlp_ready_trf.json → Base name detected: ISA_nlp_ready
+Processing file: JER_nlp_ready_trf.json → Base name detected: JER_nlp_ready
+Processing file: LAM_nlp_ready_trf.json → Base name detected: LAM_nlp_ready
+Processing file: EZK_nlp_ready_trf.json → Base name detected: EZK_nlp_ready
+Processing file: HOS_nlp_ready_trf.json → Base name detected: HOS_nlp_ready
+Processing file: JOL_nlp_ready_trf.json → Base name detected: JOL_nlp_ready
+Processing file: AMO_nlp_ready_trf.json → Base name detected: AMO_nlp_ready
+Processing file: OBA_nlp_ready_trf.json → Base name detected: OBA_nlp_ready
+Processing file: JON_nlp_ready_trf.json → Base name detected: JON_nlp_ready
+Processing file: MIC_nlp_ready_trf.json → Base name detected: MIC_nlp_ready
+Processing file: NAM_nlp_ready_trf.json → Base name detected: NAM_nlp_ready
+Processing file: HAB_nlp_ready_trf.json → Base name detected: HAB_nlp_ready
+Processing file: ZEP_nlp_ready_trf.json → Base name detected: ZEP_nlp_ready
+Processing file: HAG_nlp_ready_trf.json → Base name detected: HAG_nlp_ready
+Processing file: ZEC_nlp_ready_trf.json → Base name detected: ZEC_nlp_ready
+Processing file: MAL_nlp_ready_trf.json → Base name detected: MAL_nlp_ready
+Processing file: TOB_nlp_ready_trf.json → Base name detected: TOB_nlp_ready
+Processing file: JDT_nlp_ready_trf.json → Base name detected: JDT_nlp_ready
+Processing file: ESG_nlp_ready_trf.json → Base name detected: ESG_nlp_ready
+Processing file: WIS_nlp_ready_trf.json → Base name detected: WIS_nlp_ready
+Processing file: SIR_nlp_ready_trf.json → Base name detected: SIR_nlp_ready
+Processing file: BAR_nlp_ready_trf.json → Base name detected: BAR_nlp_ready
+Processing file: LJE_nlp_ready_trf.json → Base name detected: LJE_nlp_ready
+Processing file: SUS_nlp_ready_trf.json → Base name detected: SUS_nlp_ready
+Processing file: BEL_nlp_ready_trf.json → Base name detected: BEL_nlp_ready
+Processing file: 1MA_nlp_ready_trf.json → Base name detected: 1MA_nlp_ready
+Processing file: 2MA_nlp_ready_trf.json → Base name detected: 2MA_nlp_ready
+Processing file: 1ES_nlp_ready_trf.json → Base name detected: 1ES_nlp_ready
+Processing file: MAN_nlp_ready_trf.json → Base name detected: MAN_nlp_ready
+Processing file: 3MA_nlp_ready_trf.json → Base name detected: 3MA_nlp_ready
+Processing file: 4MA_nlp_ready_trf.json → Base name detected: 4MA_nlp_ready
+Processing file: DAG_nlp_ready_trf.json → Base name detected: DAG_nlp_ready
+🔍 Detected file pairs: {'GEN_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/GEN_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/GEN_nlp_ready_trf.json'}, 'EXO_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/EXO_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/EXO_nlp_ready_trf.json'}, 'LEV_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/LEV_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/LEV_nlp_ready_trf.json'}, 'NUM_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/NUM_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/NUM_nlp_ready_trf.json'}, 'DEU_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/DEU_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/DEU_nlp_ready_trf.json'}, 'JOS_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JOS_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JOS_nlp_ready_trf.json'}, 'JDG_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JDG_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JDG_nlp_ready_trf.json'}, 'RUT_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/RUT_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/RUT_nlp_ready_trf.json'}, '1SA_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/1SA_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/1SA_nlp_ready_trf.json'}, '2SA_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/2SA_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/2SA_nlp_ready_trf.json'}, '1KI_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/1KI_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/1KI_nlp_ready_trf.json'}, '2KI_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/2KI_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/2KI_nlp_ready_trf.json'}, '1CH_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/1CH_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/1CH_nlp_ready_trf.json'}, '2CH_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/2CH_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/2CH_nlp_ready_trf.json'}, 'EZR_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/EZR_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/EZR_nlp_ready_trf.json'}, 'JOB_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JOB_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JOB_nlp_ready_trf.json'}, 'PSA_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/PSA_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/PSA_nlp_ready_trf.json'}, 'PRO_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/PRO_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/PRO_nlp_ready_trf.json'}, 'ECC_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/ECC_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/ECC_nlp_ready_trf.json'}, 'SNG_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/SNG_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/SNG_nlp_ready_trf.json'}, 'ISA_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/ISA_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/ISA_nlp_ready_trf.json'}, 'JER_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JER_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JER_nlp_ready_trf.json'}, 'LAM_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/LAM_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/LAM_nlp_ready_trf.json'}, 'EZK_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/EZK_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/EZK_nlp_ready_trf.json'}, 'HOS_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/HOS_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/HOS_nlp_ready_trf.json'}, 'JOL_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JOL_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JOL_nlp_ready_trf.json'}, 'AMO_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/AMO_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/AMO_nlp_ready_trf.json'}, 'OBA_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/OBA_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/OBA_nlp_ready_trf.json'}, 'JON_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JON_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JON_nlp_ready_trf.json'}, 'MIC_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/MIC_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/MIC_nlp_ready_trf.json'}, 'NAM_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/NAM_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/NAM_nlp_ready_trf.json'}, 'HAB_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/HAB_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/HAB_nlp_ready_trf.json'}, 'ZEP_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/ZEP_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/ZEP_nlp_ready_trf.json'}, 'HAG_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/HAG_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/HAG_nlp_ready_trf.json'}, 'ZEC_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/ZEC_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/ZEC_nlp_ready_trf.json'}, 'MAL_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/MAL_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/MAL_nlp_ready_trf.json'}, 'TOB_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/TOB_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/TOB_nlp_ready_trf.json'}, 'JDT_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JDT_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/JDT_nlp_ready_trf.json'}, 'ESG_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/ESG_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/ESG_nlp_ready_trf.json'}, 'WIS_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/WIS_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/WIS_nlp_ready_trf.json'}, 'SIR_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/SIR_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/SIR_nlp_ready_trf.json'}, 'BAR_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/BAR_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/BAR_nlp_ready_trf.json'}, 'LJE_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/LJE_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/LJE_nlp_ready_trf.json'}, 'SUS_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/SUS_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/SUS_nlp_ready_trf.json'}, 'BEL_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/BEL_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/BEL_nlp_ready_trf.json'}, '1MA_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/1MA_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/1MA_nlp_ready_trf.json'}, '2MA_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/2MA_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/2MA_nlp_ready_trf.json'}, '1ES_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/1ES_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/1ES_nlp_ready_trf.json'}, 'MAN_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/MAN_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/MAN_nlp_ready_trf.json'}, '3MA_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/3MA_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/3MA_nlp_ready_trf.json'}, '4MA_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/4MA_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/4MA_nlp_ready_trf.json'}, 'DAG_nlp_ready': {'ner': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/DAG_nlp_ready_ner.json', 'trf': '/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis/DAG_nlp_ready_trf.json'}}
+📄 Processing GEN_nlp_ready: 2361 tokens found in TRF
+📄 Processing GEN_nlp_ready: 2361 tokens found in NER
+📄 Processing EXO_nlp_ready: 2404 tokens found in TRF
+📄 Processing EXO_nlp_ready: 2404 tokens found in NER
+📄 Processing LEV_nlp_ready: 2277 tokens found in TRF
+📄 Processing LEV_nlp_ready: 2277 tokens found in NER
+📄 Processing NUM_nlp_ready: 2380 tokens found in TRF
+📄 Processing NUM_nlp_ready: 2380 tokens found in NER
+📄 Processing DEU_nlp_ready: 2325 tokens found in TRF
+📄 Processing DEU_nlp_ready: 2325 tokens found in NER
+📄 Processing JOS_nlp_ready: 2316 tokens found in TRF
+📄 Processing JOS_nlp_ready: 2316 tokens found in NER
+📄 Processing JDG_nlp_ready: 2296 tokens found in TRF
+📄 Processing JDG_nlp_ready: 2296 tokens found in NER
+📄 Processing RUT_nlp_ready: 2368 tokens found in TRF
+📄 Processing RUT_nlp_ready: 2368 tokens found in NER
+📄 Processing 1SA_nlp_ready: 2354 tokens found in TRF
+📄 Processing 1SA_nlp_ready: 2354 tokens found in NER
+📄 Processing 2SA_nlp_ready: 2321 tokens found in TRF
+📄 Processing 2SA_nlp_ready: 2321 tokens found in NER
+📄 Processing 1KI_nlp_ready: 2343 tokens found in TRF
+📄 Processing 1KI_nlp_ready: 2343 tokens found in NER
+📄 Processing 2KI_nlp_ready: 2373 tokens found in TRF
+📄 Processing 2KI_nlp_ready: 2373 tokens found in NER
+📄 Processing 1CH_nlp_ready: 2663 tokens found in TRF
+📄 Processing 1CH_nlp_ready: 2663 tokens found in NER
+📄 Processing 2CH_nlp_ready: 2303 tokens found in TRF
+📄 Processing 2CH_nlp_ready: 2303 tokens found in NER
+📄 Processing EZR_nlp_ready: 2387 tokens found in TRF
+📄 Processing EZR_nlp_ready: 2387 tokens found in NER
+📄 Processing JOB_nlp_ready: 2368 tokens found in TRF
+📄 Processing JOB_nlp_ready: 2368 tokens found in NER
+📄 Processing PSA_nlp_ready: 2381 tokens found in TRF
+📄 Processing PSA_nlp_ready: 2381 tokens found in NER
+📄 Processing PRO_nlp_ready: 2394 tokens found in TRF
+📄 Processing PRO_nlp_ready: 2394 tokens found in NER
+📄 Processing ECC_nlp_ready: 2297 tokens found in TRF
+📄 Processing ECC_nlp_ready: 2297 tokens found in NER
+📄 Processing SNG_nlp_ready: 2403 tokens found in TRF
+📄 Processing SNG_nlp_ready: 2403 tokens found in NER
+📄 Processing ISA_nlp_ready: 2397 tokens found in TRF
+📄 Processing ISA_nlp_ready: 2397 tokens found in NER
+📄 Processing JER_nlp_ready: 2394 tokens found in TRF
+📄 Processing JER_nlp_ready: 2394 tokens found in NER
+📄 Processing LAM_nlp_ready: 2462 tokens found in TRF
+📄 Processing LAM_nlp_ready: 2462 tokens found in NER
+📄 Processing EZK_nlp_ready: 2357 tokens found in TRF
+📄 Processing EZK_nlp_ready: 2357 tokens found in NER
+📄 Processing HOS_nlp_ready: 2406 tokens found in TRF
+📄 Processing HOS_nlp_ready: 2406 tokens found in NER
+📄 Processing JOL_nlp_ready: 1866 tokens found in TRF
+📄 Processing JOL_nlp_ready: 1866 tokens found in NER
+📄 Processing AMO_nlp_ready: 2361 tokens found in TRF
+📄 Processing AMO_nlp_ready: 2361 tokens found in NER
+📄 Processing OBA_nlp_ready: 546 tokens found in TRF
+📄 Processing OBA_nlp_ready: 546 tokens found in NER
+📄 Processing JON_nlp_ready: 1257 tokens found in TRF
+📄 Processing JON_nlp_ready: 1257 tokens found in NER
+📄 Processing MIC_nlp_ready: 2369 tokens found in TRF
+📄 Processing MIC_nlp_ready: 2369 tokens found in NER
+📄 Processing NAM_nlp_ready: 1126 tokens found in TRF
+📄 Processing NAM_nlp_ready: 1126 tokens found in NER
+📄 Processing HAB_nlp_ready: 1313 tokens found in TRF
+📄 Processing HAB_nlp_ready: 1313 tokens found in NER
+📄 Processing ZEP_nlp_ready: 1453 tokens found in TRF
+📄 Processing ZEP_nlp_ready: 1453 tokens found in NER
+📄 Processing HAG_nlp_ready: 1112 tokens found in TRF
+📄 Processing HAG_nlp_ready: 1112 tokens found in NER
+📄 Processing ZEC_nlp_ready: 2382 tokens found in TRF
+📄 Processing ZEC_nlp_ready: 2382 tokens found in NER
+📄 Processing MAL_nlp_ready: 1671 tokens found in TRF
+📄 Processing MAL_nlp_ready: 1671 tokens found in NER
+📄 Processing TOB_nlp_ready: 2369 tokens found in TRF
+📄 Processing TOB_nlp_ready: 2369 tokens found in NER
+📄 Processing JDT_nlp_ready: 2299 tokens found in TRF
+📄 Processing JDT_nlp_ready: 2299 tokens found in NER
+📄 Processing ESG_nlp_ready: 2308 tokens found in TRF
+📄 Processing ESG_nlp_ready: 2308 tokens found in NER
+📄 Processing WIS_nlp_ready: 2348 tokens found in TRF
+📄 Processing WIS_nlp_ready: 2348 tokens found in NER
+📄 Processing SIR_nlp_ready: 2351 tokens found in TRF
+📄 Processing SIR_nlp_ready: 2351 tokens found in NER
+📄 Processing BAR_nlp_ready: 2371 tokens found in TRF
+📄 Processing BAR_nlp_ready: 2371 tokens found in NER
+📄 Processing LJE_nlp_ready: 1499 tokens found in TRF
+📄 Processing LJE_nlp_ready: 1499 tokens found in NER
+📄 Processing SUS_nlp_ready: 1341 tokens found in TRF
+📄 Processing SUS_nlp_ready: 1341 tokens found in NER
+📄 Processing BEL_nlp_ready: 1061 tokens found in TRF
+📄 Processing BEL_nlp_ready: 1061 tokens found in NER
+📄 Processing 1MA_nlp_ready: 2331 tokens found in TRF
+📄 Processing 1MA_nlp_ready: 2331 tokens found in NER
+📄 Processing 2MA_nlp_ready: 2320 tokens found in TRF
+📄 Processing 2MA_nlp_ready: 2320 tokens found in NER
+📄 Processing 1ES_nlp_ready: 2295 tokens found in TRF
+📄 Processing 1ES_nlp_ready: 2295 tokens found in NER
+📄 Processing MAN_nlp_ready: 370 tokens found in TRF
+📄 Processing MAN_nlp_ready: 370 tokens found in NER
+📄 Processing 3MA_nlp_ready: 2288 tokens found in TRF
+📄 Processing 3MA_nlp_ready: 2288 tokens found in NER
+📄 Processing 4MA_nlp_ready: 2322 tokens found in TRF
+📄 Processing 4MA_nlp_ready: 2322 tokens found in NER
+📄 Processing DAG_nlp_ready: 2359 tokens found in TRF
+📄 Processing DAG_nlp_ready: 2359 tokens found in NER
+✅ Merged proiel_trf and NER outputs into CoNLL-U format.
+#+end_example
