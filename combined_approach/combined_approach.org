@@ -248,7 +248,7 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
    print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
 #+end_src
 
-**** UD-compliant, integer=1
+**** UD-compliant, integer=1 - however, deps and so on are fucked due to proiel_trf, so left blank in order to focus on annotation of UPOS and NER
 
 #+begin_src python :results output
   import os
@@ -327,16 +327,13 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
               upos = trf_entry.get("upos", "_")  # Get UPOS tag
               xpos = "_"
               feats = trf_entry.get("feats", "_")
-              head = trf_entry.get("head", 0)
-              deprel = trf_entry.get("dep", "_")
-              deps = trf_entry.get("deps", "_")
               ner_label = ner_entry.get("ner", "O")
 
               # ✅ Named Entity Tagging in MISC Field
               misc_field = f"NER={ner_label}" if ner_label != "O" else "_"
 
               # ✅ Start a new sentence when encountering a ROOT (HEAD=0)
-              if head == 0 and sentence_tokens:
+              if len(sentence_tokens) > 0 and trf_entry.get("head", 0) == 0:
                   # Write previous sentence
                   conllu_file.write(f"# sent_id = {sentence_id}\n")
                   conllu_file.write(f"# text = {' '.join(sentence_text)}\n")
@@ -347,10 +344,10 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
                   sentence_tokens = []
                   sentence_text = []
 
-              # ✅ Add token to sentence buffer
+              # ✅ Add token to sentence buffer (head and deprel removed)
               sentence_tokens.append("\t".join([
                   str(len(sentence_tokens) + 1),  # Token index within sentence
-                  form, lemma, upos, xpos, feats, str(head), deprel, deps, misc_field
+                  form, lemma, upos, xpos, feats, "_", "_", "_", misc_field
               ]))
               sentence_text.append(form)  # Store original text for `# text = ...`
 
@@ -360,10 +357,5 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
               conllu_file.write(f"# text = {' '.join(sentence_text)}\n")
               conllu_file.write("\n".join(sentence_tokens) + "\n\n")
 
-  print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
+  print("✅ Merged proiel_trf and NER outputs into CoNLL-U format without dependencies.")
 #+end_src
-
-
-
-
-
