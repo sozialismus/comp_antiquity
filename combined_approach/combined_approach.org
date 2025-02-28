@@ -171,7 +171,7 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
    # debug - check files are actually located in input
    # files = os.listdir(input_folder)
    # print("📂 Files in input folder:", files)
-   output_folder = "/home/gnosis/Documents/au_work/main/results/brent"
+   output_folder = "/home/gnosis/Documents/au_work/main/results/brent_non_ud"
 
    os.makedirs(output_folder, exist_ok=True)
 
@@ -299,7 +299,10 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
            open(ner_path, "r", encoding="utf-8") as ner_file, \
            open(conllu_filename, "w", encoding="utf-8") as conllu_file:
 
-          conllu_file.write("# This file follows Universal Dependencies format\n\n")
+          # ✅ Add UD-compliant metadata at the beginning
+          conllu_file.write("# This file follows Universal Dependencies format\n")
+          conllu_file.write(f"# newdoc id = {base_name}\n")  # Document ID from base_name
+          conllu_file.write("# global.features = syntax_not_annotated\n\n")
 
           # ✅ Read NDJSON into dictionaries
           trf_data = {entry["id"]: entry for entry in map(json.loads, trf_file)}
@@ -357,5 +360,257 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
               conllu_file.write(f"# text = {' '.join(sentence_text)}\n")
               conllu_file.write("\n".join(sentence_tokens) + "\n\n")
 
-  print("✅ Merged proiel_trf and NER outputs into CoNLL-U format without dependencies.")
+      print(f"✅ Processed {base_name}: CoNLL-U file saved with 'syntax_not_annotated' flag.")
+
 #+end_src
+
+** Extract various entities from finished .conllu and export to either .csv or .json
+
+*** Script for extraction from .conllu, keeping ID, FORM, LEMMA, UPOS and NER (MISC)
+#+begin_src python :results output
+import os
+import csv
+import re
+
+# ✅ Define input and base output folder (change as needed)
+INPUT_PATH = "/home/gnosis/Documents/au_work/main/results/u09/SBLGNT_non_ud/1Cor_nlp_ready.conllu"  # Can be a file or directory
+OUTPUT_BASE = "/home/gnosis/Documents/au_work/main/results/u09/focused"  # Parent directory for all output files
+
+def extract_conllu_to_csv(conllu_file, input_base):
+    """Extracts relevant fields from a CoNLL-U file and saves as a CSV in a parallel structure."""
+    
+    # ✅ Determine relative path and new output location
+    relative_path = os.path.relpath(conllu_file, input_base)  # Get relative path from input root
+    output_csv = os.path.join(OUTPUT_BASE, relative_path.replace(".conllu", ".csv"))  # Change extension
+
+    # ✅ Ensure the output directory exists
+    os.makedirs(os.path.dirname(output_csv), exist_ok=True)
+
+    extracted_data = []
+    with open(conllu_file, "r", encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue  # Skip comments and empty lines
+
+            columns = line.split("\t")
+            if len(columns) < 10:
+                continue  # Skip malformed lines
+
+            word_id, form, lemma, upos, misc = columns[0], columns[1], columns[2], columns[3], columns[9]
+            ner_match = re.search(r"NER=([^\s|]+)", misc)
+            ner = ner_match.group(1) if ner_match else "O"  # Default to "O"
+
+            extracted_data.append([word_id, form, lemma, upos, ner])
+
+    # ✅ Write to CSV
+    with open(output_csv, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["ID", "FORM", "LEMMA", "UPOS", "NER"])  # CSV Header
+        writer.writerows(extracted_data)
+
+    print(f"✅ Processed: {conllu_file} → {output_csv}")
+
+
+def process_directory(input_folder):
+    """Processes all .conllu files in a directory and saves CSVs in the parallel output structure."""
+    conllu_files = []
+    for root, _, files in os.walk(input_folder):
+        for file in files:
+            if file.endswith(".conllu"):
+                conllu_files.append(os.path.join(root, file))
+
+    if not conllu_files:
+        print("⚠️ No .conllu files found in the directory.")
+        return
+
+    for conllu_path in conllu_files:
+        extract_conllu_to_csv(conllu_path, input_folder)
+
+    print(f"✅ Batch processing completed. CSV files saved in {OUTPUT_BASE}")
+
+
+# ✅ Automatically detect if processing a file or directory
+if os.path.isdir(INPUT_PATH):
+    process_directory(INPUT_PATH)
+else:
+    extract_conllu_to_csv(INPUT_PATH, os.path.dirname(INPUT_PATH))
+
+#+end_src
+
+#+RESULTS:
+: ✅ Processed: /home/gnosis/Documents/au_work/main/results/u09/SBLGNT_non_ud/1Cor_nlp_ready.conllu → /home/gnosis/Documents/au_work/main/results/u09/focused/1Cor_nlp_ready.csv
+
+* Post-processing
+
+** Analyzing NER-performance
+- Making a script for analyzing the overall performance of the NER-model
+  - Leverages the lemmatization of the TRF model, and analyzes the normalized lemmas/morphemes here, whereby the less often used words in NT/LXX (eg. names like Ιησυς are only reckognized in the nominative case)
+    - Thereby generating an overall hit/miss ratio, annotating the original .conllu or extrated entities from a .conllu (the .csv files from above)
+
+*** The actual script
+
+**** Updated NER_compare
+
+#+begin_src python
+  import os
+  import csv
+  import re
+  import spacy
+  from collections import Counter
+
+  # ✅ Load the correct Greek NER model (grc_ner_trf)
+  nlp = spacy.load("grc_ner_trf")
+
+  # ✅ Define input path
+  INPUT_PATH = "/home/gnosis/Documents/au_work/main/results/u09/focused"  # Adjust as needed
+
+  def run_ner_on_lemmatized_text(lemmas):
+      """Reconstruct text from lemmas and run NER using grc_ner_trf."""
+      text = " ".join(lemmas)  # ✅ Rebuild the full text from lemmas
+      doc = nlp(text)  # ✅ Process with the correct model
+      return [token.ent_type_ if token.ent_type_ else "O" for token in doc]  # ✅ Extract entity labels
+
+  def process_csv(csv_file):
+      """Analyze NER performance using lemmata in a CSV file and update it if needed."""
+      total_original = Counter()
+      total_lemma_ner = Counter()
+      updated_rows = []
+
+      output_file = csv_file  # ✅ Overwrite the same file
+
+      # ✅ Read CSV
+      with open(csv_file, "r", encoding="utf-8") as file:
+          reader = csv.DictReader(file)
+          fieldnames = reader.fieldnames + ["NER_FROM_LEMMA"]  # ✅ Append new column
+
+          lemmas = [row["LEMMA"] for row in reader]  # ✅ Collect all lemmas
+          file.seek(0)
+          next(reader)  # ✅ Skip header
+
+          predicted_ner = run_ner_on_lemmatized_text(lemmas)  # ✅ Run NER on the full sequence
+
+          for i, row in enumerate(reader):
+              original_ner = row["NER"]
+              lemma_ner = predicted_ner[i]  # ✅ Get corresponding lemma-based NER
+
+              total_original[original_ner] += 1
+              total_lemma_ner[lemma_ner] += 1
+
+              # ✅ Only add "NER_FROM_LEMMA" if different from original
+              row["NER_FROM_LEMMA"] = lemma_ner if original_ner != lemma_ner else ""
+
+              updated_rows.append(row)
+
+      # ✅ Write corrected CSV
+      with open(output_file, "w", encoding="utf-8", newline="") as file:
+          writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore", delimiter=",")
+          writer.writeheader()
+          writer.writerows(updated_rows)
+
+      return total_original, total_lemma_ner
+
+  def process_conllu(conllu_file):
+      """Analyze NER performance using lemmata in a CoNLL-U file and update it if needed."""
+      total_original = Counter()
+      total_lemma_ner = Counter()
+      updated_lines = []
+
+      lemmas = []
+      with open(conllu_file, "r", encoding="utf-8") as file:
+          for line in file:
+              stripped_line = line.strip()
+              if not stripped_line or stripped_line.startswith("#"):
+                  updated_lines.append(line)
+                  continue
+
+              columns = stripped_line.split("\t")
+              if len(columns) < 10:
+                  updated_lines.append(line)
+                  continue
+
+              lemmas.append(columns[2])  # ✅ Collect lemmas in order
+
+      # ✅ Run NER on the full lemmatized text
+      predicted_ner = run_ner_on_lemmatized_text(lemmas)
+
+      with open(conllu_file, "r", encoding="utf-8") as file:
+          index = 0
+          for line in file:
+              stripped_line = line.strip()
+              if not stripped_line or stripped_line.startswith("#"):
+                  updated_lines.append(line)
+                  continue
+
+              columns = stripped_line.split("\t")
+              if len(columns) < 10:
+                  updated_lines.append(line)
+                  continue
+
+              misc = columns[9]
+              ner_match = re.search(r"NER=([^\s|]+)", misc)
+              original_ner = ner_match.group(1) if ner_match else "O"
+              lemma_ner = predicted_ner[index]  # ✅ Get the NER prediction for this token
+
+              total_original[original_ner] += 1
+              total_lemma_ner[lemma_ner] += 1
+
+              # ✅ Only add "NER_FROM_LEMMA" if different from original
+              if original_ner != lemma_ner:
+                  if misc == "_":
+                      columns[9] = f"NER_FROM_LEMMA={lemma_ner}"
+                  else:
+                      columns[9] += f"|NER_FROM_LEMMA={lemma_ner}"
+
+              updated_lines.append("\t".join(columns) + "\n")
+              index += 1
+
+      # ✅ Overwrite CoNLL-U file
+      with open(conllu_file, "w", encoding="utf-8") as file:
+          file.writelines(updated_lines)
+
+      return total_original, total_lemma_ner
+
+  def analyze_files(input_path):
+      """Determine file type (.csv or .conllu), run NER on lemmas, and update the files."""
+      if os.path.isdir(input_path):
+          files = [os.path.join(root, f) for root, _, filenames in os.walk(input_path) for f in filenames if f.endswith((".csv", ".conllu"))]
+      else:
+          files = [input_path]
+
+      total_original = Counter()
+      total_lemma_ner = Counter()
+
+      for file in files:
+          print(f"📊 Processing: {file}")
+          if file.endswith(".csv"):
+              orig, lemma_ner = process_csv(file)
+          elif file.endswith(".conllu"):
+              orig, lemma_ner = process_conllu(file)
+          else:
+              continue
+
+          total_original.update(orig)
+          total_lemma_ner.update(lemma_ner)
+
+      # ✅ Compute differences in NER detection
+      print("\n📈 **NER Performance Comparison:**")
+      print(f"Total Original Entities: {sum(total_original.values())}")
+      print(f"Total Entities from Lemmas: {sum(total_lemma_ner.values())}")
+
+      # ✅ Show individual category breakdown
+      print("\n🔍 **Breakdown per Entity Type:**")
+      print(f"{'Entity':<20}{'Original':<10}{'From Lemma':<10}{'Difference':<10}")
+      for entity in set(total_original.keys()).union(total_lemma_ner.keys()):
+          original_count = total_original.get(entity, 0)
+          lemma_count = total_lemma_ner.get(entity, 0)
+          diff = lemma_count - original_count
+          print(f"{entity:<20}{original_count:<10}{lemma_count:<10}{diff:<10}")
+
+      print("\n✅ Analysis Complete!")
+
+  # ✅ Run analysis
+  analyze_files(INPUT_PATH)
+#+end_src
+
+

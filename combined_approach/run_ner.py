@@ -62,10 +62,10 @@ def read_files():
             file_path = os.path.join(input_folder, filename)
             with open(file_path, "r", encoding="utf-8") as f:
                 # full text, no word limit
-                # yield f.read(), filename  # ✅ No word limit (full text)
+                yield f.read(), filename  # ✅ No word limit (full text)
                 # limit to reading texts to the first 2000 words
-                text = f.read().split()[:2000]  # ✅ Limit to first 2000 words
-                yield " ".join(text), filename  # ✅ Yield truncated text & filename
+                # text = f.read().split()[:2000]  # ✅ Limit to first 2000 words
+                # yield " ".join(text), filename  # ✅ Yield truncated text & filename
 
 # Process the files with nlp.pipe() in batches of x files at a time
 for doc, filename in nlp.pipe(read_files(), batch_size=1, as_tuples=True):
@@ -73,6 +73,9 @@ for doc, filename in nlp.pipe(read_files(), batch_size=1, as_tuples=True):
 
     with open(output_path, "w", encoding="utf-8") as f:
         for token in doc:
+            # Skip tokens that are line breaks
+            if token.text == "\n":
+                continue  
             token_data = {
                 "id": token.i + 1,  # ✅ 1-based token index
                 "text": token.text,  # ✅ Token text
