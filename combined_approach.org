@@ -78,59 +78,61 @@ os.system("conda activate ner && python run_proiel_ner.py")
 *** merge_results.py
 
 #+begin_src python :results output
-  import json
-  import os
-  import pandas as pd
+import json
+import os
+import pandas as pd
 
-  input_folder = "/path/to/results/"
-  output_folder = "/path/to/results/conllu/"
+input_folder = "/home/gnosis/Documents/au_work/main/corpora/extract/nlp/try_analysis"
+output_folder = "/home/gnosis/Documents/au_work/main/results/u09/try"
 
-  os.makedirs(output_folder, exist_ok=True)
+os.makedirs(output_folder, exist_ok=True)
 
-  for filename in os.listdir(input_folder):
-      if filename.endswith("_trf.json"):
-          base_name = filename.replace("_trf.json", "")
-          trf_path = os.path.join(input_folder, filename)
-          ner_path = os.path.join(input_folder, base_name + "_ner.json")
+for filename in os.listdir(input_folder):
+    if filename.endswith("_trf.json"):
+        base_name = filename.replace("_trf.json", "")
+        trf_path = os.path.join(input_folder, filename)
+        ner_path = os.path.join(input_folder, base_name + "_ner.json")
 
-          with open(trf_path, "r", encoding="utf-8") as f:
-              trf_data = json.load(f)
+        with open(trf_path, "r", encoding="utf-8") as f:
+            trf_data = json.load(f)
 
-          with open(ner_path, "r", encoding="utf-8") as f:
-              ner_data = json.load(f)
+        with open(ner_path, "r", encoding="utf-8") as f:
+            ner_data = json.load(f)
 
-          # Extract named entities from NER results
-          ner_entities = {}
-          for ent in ner_data.get("ents", []):
-              for i in range(ent["start"], ent["end"]):
-                  ner_entities[i] = ent["label"]
+        # Extract named entities from NER results
+        ner_entities = {}
+        for ent in ner_data.get("ents", []):
+            for i in range(ent["start"], ent["end"]):
+                ner_entities[i] = ent["label"]
 
-          conllu_data = []
-          for i, token in enumerate(trf_data["tokens"]):
-              # Get token information
-              text = token["text"]
-              lemma = token["lemma"]
-              upos = token["upos"]
-              feats = token.get("feats", "_")
-              head = token["head"] + 1 if token["head"] != i else 0  # ROOT is 0
-              dep = token["dep"]
-              
-              # Check if NER tag exists
-              ner_label = ner_entities.get(i, None)
-              misc_field = f"NER={ner_label}" if ner_label else "_"
+        conllu_data = []
+        for i, token in enumerate(trf_data["tokens"]):
+            # Get token information
+            text = token["text"]
+            lemma = token["lemma"]
+            upos = token["upos"]
+            feats = token.get("feats", "_")
+            head = token["head"] + 1 if token["head"] != i else 0  # ROOT is 0
+            dep = token["dep"]
 
-              # Append to CoNLL-U format
-              conllu_data.append([
-                  i + 1, text, lemma, upos, "_", feats, head, dep, "_", misc_field
-              ])
+            # Check if NER tag exists
+            ner_label = ner_entities.get(i, None)
+            misc_field = f"NER={ner_label}" if ner_label else "_"
 
-          # Save CoNLL-U file
-          conllu_filename = os.path.join(output_folder, base_name + ".conllu")
-          with open(conllu_filename, "w", encoding="utf-8") as f:
-              f.write("# This file follows Universal Dependencies format\n\n")
-              for row in conllu_data:
-                  f.write("\t".join(map(str, row)) + "\n")
-              f.write("\n")
+            # Append to CoNLL-U format
+            conllu_data.append([
+                i + 1, text, lemma, upos, "_", feats, head, dep, "_", misc_field
+            ])
 
-  print("CoNLL-U files saved.")
+        # Save CoNLL-U file
+        conllu_filename = os.path.join(output_folder, base_name + ".conllu")
+        with open(conllu_filename, "w", encoding="utf-8") as f:
+            f.write("# This file follows Universal Dependencies format\n\n")
+            for row in conllu_data:
+                f.write("\t".join(map(str, row)) + "\n")
+            f.write("\n")
+
+print("CoNLL-U files saved.")
 #+end_src
+
+#+RESULTS:

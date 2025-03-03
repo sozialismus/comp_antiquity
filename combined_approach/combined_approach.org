@@ -163,90 +163,114 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
 **** nyt forsøg - saves with ID in continuous count - not integer=1
 
 #+begin_src python :results output
-   import os
-   import json
-   import re  # ✅ Regex for flexible filename matching
+import os
+import json
+import re  # ✅ Regex for flexible filename matching
 
-   input_folder = "/home/gnosis/Documents/au_work/main/corpora/extract/nlp/brent_punct_analysis"
-   # debug - check files are actually located in input
-   # files = os.listdir(input_folder)
-   # print("📂 Files in input folder:", files)
-   output_folder = "/home/gnosis/Documents/au_work/main/results/brent_non_ud"
+input_folder = "/home/gnosis/Documents/au_work/main/results/u09/try_analysis"
+# debug - check files are actually located in input
+# files = os.listdir(input_folder)
+# print("📂 Files in input folder:", files)
+output_folder = "/home/gnosis/Documents/au_work/main/results/u09/try_conllu"
 
-   os.makedirs(output_folder, exist_ok=True)
+os.makedirs(output_folder, exist_ok=True)
 
-   # Collect all .json files (assuming they are NDJSON)
-   json_files = [f for f in os.listdir(input_folder) if f.endswith(".json")]
+# Collect all .json files (assuming they are NDJSON)
+json_files = [f for f in os.listdir(input_folder) if f.endswith(".json")]
 
-   # Find matching _trf.json and _ner.json files
-   file_pairs = {}
-   for filename in json_files:
-       # Remove `_trf.json` or `_ner.json` to get the base name
-       base_name = re.sub(r"(_trf|_ner)\.json$", "", filename)
-       print(f"Processing file: {filename} → Base name detected: {base_name}")
+# Find matching _trf.json and _ner.json files
+file_pairs = {}
+for filename in json_files:
+    # Remove `_trf.json` or `_ner.json` to get the base name
+    base_name = re.sub(r"(_trf|_ner)\.json$", "", filename)
+    print(f"Processing file: {filename} → Base name detected: {base_name}")
 
-       if base_name not in file_pairs:
-           file_pairs[base_name] = {}
+    if base_name not in file_pairs:
+        file_pairs[base_name] = {}
 
-       if filename.endswith("_trf.json"):
-           file_pairs[base_name]["trf"] = os.path.join(input_folder, filename)
-       elif filename.endswith("_ner.json"):
-           file_pairs[base_name]["ner"] = os.path.join(input_folder, filename)
+    if filename.endswith("_trf.json"):
+        file_pairs[base_name]["trf"] = os.path.join(input_folder, filename)
+    elif filename.endswith("_ner.json"):
+        file_pairs[base_name]["ner"] = os.path.join(input_folder, filename)
 
-   # Debugging: Print detected file pairs
-   print(f"🔍 Detected file pairs: {file_pairs}")
+# Debugging: Print detected file pairs
+print(f"🔍 Detected file pairs: {file_pairs}")
 
-   # Merge TRF and NER files into CoNLL-U format
-   for base_name, paths in file_pairs.items():
-       if "trf" not in paths or "ner" not in paths:
-           print(f"⚠️ Warning: Missing TRF or NER file for {base_name}, skipping merge.")
-           continue
+# Merge TRF and NER files into CoNLL-U format
+for base_name, paths in file_pairs.items():
+    if "trf" not in paths or "ner" not in paths:
+        print(f"⚠️ Warning: Missing TRF or NER file for {base_name}, skipping merge.")
+        continue
 
-       trf_path = paths["trf"]
-       ner_path = paths["ner"]
-       conllu_filename = os.path.join(output_folder, base_name + ".conllu")
+    trf_path = paths["trf"]
+    ner_path = paths["ner"]
+    conllu_filename = os.path.join(output_folder, base_name + ".conllu")
 
-       with open(trf_path, "r", encoding="utf-8") as trf_file, \
-            open(ner_path, "r", encoding="utf-8") as ner_file, \
-            open(conllu_filename, "w", encoding="utf-8") as conllu_file:
+    with open(trf_path, "r", encoding="utf-8") as trf_file, \
+         open(ner_path, "r", encoding="utf-8") as ner_file, \
+         open(conllu_filename, "w", encoding="utf-8") as conllu_file:
 
-           conllu_file.write("# This file follows Universal Dependencies format\n\n")
+        conllu_file.write("# This file follows Universal Dependencies format\n\n")
 
-           # Read NDJSON line-by-line
-           trf_data = {entry["id"]: entry for entry in map(json.loads, trf_file)}
-           ner_data = {entry["id"]: entry for entry in map(json.loads, ner_file)}
+        # Read NDJSON line-by-line
+        trf_data = {entry["id"]: entry for entry in map(json.loads, trf_file)}
+        ner_data = {entry["id"]: entry for entry in map(json.loads, ner_file)}
 
-           # Debugging: Check if data is being read
-           print(f"📄 Processing {base_name}: {len(trf_data)} tokens found in TRF")
-           print(f"📄 Processing {base_name}: {len(ner_data)} tokens found in NER")
+        # Debugging: Check if data is being read
+        print(f"📄 Processing {base_name}: {len(trf_data)} tokens found in TRF")
+        print(f"📄 Processing {base_name}: {len(ner_data)} tokens found in NER")
+        # ✅ Debugging: Check for missing tokens in either file
+        trf_ids = set(trf_data.keys())
+        ner_ids = set(ner_data.keys())
 
-           # Merge TRF and NER based on "id"
-           for token_id in sorted(trf_data.keys()):  # Ensure correct order
-               trf_entry = trf_data[token_id]
-               ner_entry = ner_data.get(token_id, {"ner": "O"})  # Default to "O"
+        missing_in_ner = trf_ids - ner_ids
+        missing_in_trf = ner_ids - trf_ids
 
-               # ✅ Extract token attributes
-               form = trf_entry.get("text", "_")
-               lemma = trf_entry.get("lemma", "_")
-               upos = trf_entry.get("upos", "_")
-               xpos = "_"
-               feats = trf_entry.get("feats", "_")
-               head = trf_entry.get("head", 0)
-               deprel = trf_entry.get("dep", "_")
-               deps = trf_entry.get("deps", "_")
-               ner_label = ner_entry.get("ner", "O")
+        if missing_in_ner:
+            print(f"⚠️ Tokens in TRF but missing in NER: {sorted(missing_in_ner)[:10]} ...")  # Show first 10
+        if missing_in_trf:
+            print(f"⚠️ Tokens in NER but missing in TRF: {sorted(missing_in_trf)[:10]} ...")  # Show first 10
 
-               # 🏷️ Store Named Entity Label in MISC
-               misc_field = f"NER={ner_label}" if ner_label != "O" else "_"
+        # ✅ Debugging: Check for mismatched token texts
+        for token_id in sorted(trf_ids & ner_ids):  # Only check IDs that exist in both
+            if trf_data[token_id]["text"] != ner_data[token_id]["text"]:
+                print(f"⚠️ Text mismatch at ID {token_id}: TRF='{trf_data[token_id]['text']}' vs NER='{ner_data[token_id]['text']}'")
+                break  # Stop at first mismatch        # Merge TRF and NER based on "id"
+        for token_id in sorted(trf_data.keys()):  # Ensure correct order
+            trf_entry = trf_data[token_id]
+            ner_entry = ner_data.get(token_id, {"ner": "O"})  # Default to "O"
 
-               # 📌 Append token data to CoNLL-U format
-               conllu_row = [token_id, form, lemma, upos, xpos, feats, head, deprel, deps, misc_field]
-               conllu_file.write("\t".join(map(str, conllu_row)) + "\n")
+            # ✅ Extract token attributes
+            form = trf_entry.get("text", "_")
+            lemma = trf_entry.get("lemma", "_")
+            upos = trf_entry.get("upos", "_")
+            xpos = "_"
+            feats = trf_entry.get("feats", "_")
+            head = trf_entry.get("head", 0)
+            deprel = trf_entry.get("dep", "_")
+            deps = trf_entry.get("deps", "_")
+            ner_label = ner_entry.get("ner", "O")
 
-           conllu_file.write("\n")  # Separate sentences with a blank line
+            # 🏷️ Store Named Entity Label in MISC
+            misc_field = f"NER={ner_label}" if ner_label != "O" else "_"
 
-   print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
+            # 📌 Append token data to CoNLL-U format
+            conllu_row = [token_id, form, lemma, upos, xpos, feats, head, deprel, deps, misc_field]
+            conllu_file.write("\t".join(map(str, conllu_row)) + "\n")
+
+        conllu_file.write("\n")  # Separate sentences with a blank line
+
+print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
 #+end_src
+
+#+RESULTS:
+: Processing file: John_nlp_ready_trf.json → Base name detected: John_nlp_ready
+: Processing file: John_nlp_ready_ner.json → Base name detected: John_nlp_ready
+: 🔍 Detected file pairs: {'John_nlp_ready': {'trf': '/home/gnosis/Documents/au_work/main/results/u09/try_analysis/John_nlp_ready_trf.json', 'ner': '/home/gnosis/Documents/au_work/main/results/u09/try_analysis/John_nlp_ready_ner.json'}}
+: 📄 Processing John_nlp_ready: 18003 tokens found in TRF
+: 📄 Processing John_nlp_ready: 18003 tokens found in NER
+: ✅ Merged proiel_trf and NER outputs into CoNLL-U format.
+
 
 **** UD-compliant, integer=1 - however, deps and so on are fucked due to proiel_trf, so left blank in order to focus on annotation of UPOS and NER
 
@@ -255,11 +279,11 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
   import json
   import re  # ✅ Regex for flexible filename matching
 
-  input_folder = "/home/gnosis/Documents/au_work/main/results/u09/SBLGNT_punct_analysis"
+  input_folder = "/home/gnosis/Documents/au_work/main/results/u09/try_analysis"
   # debug - check files are actually located in input
   # files = os.listdir(input_folder)
   # print("📂 Files in input folder:", files)
-  output_folder = "/home/gnosis/Documents/au_work/main/results/sblgnt_ud_comp"
+  output_folder = "/home/gnosis/Documents/au_work/main/results/u09/try_conllu"
 
   # ✅ Ensure output directory exists
   os.makedirs(output_folder, exist_ok=True)
@@ -272,7 +296,7 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
   file_pairs = {}
   for filename in json_files:
       base_name = re.sub(r"(_trf|_ner)\.json$", "", filename)  # Remove suffix
-      print(f"Processing file: {filename} → Base name detected: {base_name}")
+      # print(f"Processing file: {filename} → Base name detected: {base_name}")
 
       if base_name not in file_pairs:
           file_pairs[base_name] = {}
@@ -283,12 +307,12 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
           file_pairs[base_name]["ner"] = os.path.join(input_folder, filename)
 
   # ✅ Debug: Show detected file pairs
-  print(f"🔍 Detected file pairs: {file_pairs}")
+  # print(f"🔍 Detected file pairs: {file_pairs}")
 
   # ✅ Process each file pair
   for base_name, paths in file_pairs.items():
       if "trf" not in paths or "ner" not in paths:
-          print(f"⚠️ Warning: Missing TRF or NER file for {base_name}, skipping merge.")
+          # print(f"⚠️ Warning: Missing TRF or NER file for {base_name}, skipping merge.")
           continue
 
       trf_path = paths["trf"]
@@ -363,6 +387,11 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
       print(f"✅ Processed {base_name}: CoNLL-U file saved with 'syntax_not_annotated' flag.")
 
 #+end_src
+
+#+RESULTS:
+: 📄 Processing John_nlp_ready: 18003 tokens in TRF
+: 📄 Processing John_nlp_ready: 18003 tokens in NER
+: ✅ Processed John_nlp_ready: CoNLL-U file saved with 'syntax_not_annotated' flag.
 
 ** Extract various entities from finished .conllu and export to either .csv or .json
 
