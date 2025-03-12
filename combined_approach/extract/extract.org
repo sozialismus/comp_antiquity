@@ -52,7 +52,7 @@ print("Processing complete. Files saved in:", output_dir)
 
 #+RESULTS:
 : None
-**** Punctuation included
+**** Punctuation included - by paragraph in .xml
 
 #+begin_src python
   import xml.etree.ElementTree as ET
@@ -115,8 +115,64 @@ print("Processing complete. Files saved in:", output_dir)
 
 #+end_src
 
-#+RESULTS:
-: None
+**** Punctuation included - verse by verse
+
+#+begin_src python
+import xml.etree.ElementTree as ET
+import re
+import os
+
+# Define input and output directories
+input_dir = "/home/gnosis/Documents/au_work/main/corpora/opensource/SBLGNT-master/data/sblgnt/xml"
+output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct"
+# Ensure output directory exists
+os.makedirs(output_dir, exist_ok=True)
+
+# Function to process a single XML file
+def process_xml_file(file_path):
+    tree = ET.parse(file_path)
+    root = tree.getroot()
+    
+    verses = []
+    current_verse = []
+    
+    for paragraph in root.findall(".//p"):
+        for element in paragraph:
+            if element.tag == "verse-number":
+                if current_verse:  # If there's already a verse collected, store it
+                    verses.append("".join(current_verse).strip())
+                    current_verse = []  # Start a new verse
+                
+            if element.tag in ["w", "prefix", "suffix"]:
+                text = element.text.strip() if element.text else ""
+                if text:
+                    if element.tag == "w" and current_verse:  # Add a space before words, except the first
+                        current_verse.append(" ")
+                    current_verse.append(text)
+    
+    # Capture the last verse
+    if current_verse:
+        verses.append("".join(current_verse).strip())
+
+    # Clean text: keep Greek letters, spaces, and punctuation marks (.,;·)
+    verses = [re.sub(r"[^\u0370-\u03FF\u1F00-\u1FFF\s.,;·]", "", verse) for verse in verses]
+    
+    # Extract filename without extension
+    base_name = os.path.splitext(os.path.basename(file_path))[0]
+    
+    # Save NLP-ready text
+    with open(os.path.join(output_dir, f"{base_name}_nlp_ready.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(verses))
+
+# Iterate over all XML files in the directory
+for file_name in os.listdir(input_dir):
+    if file_name.endswith(".xml"):
+        file_path = os.path.join(input_dir, file_name)
+        print(f"Processing {file_name}...")
+        process_xml_file(file_path)
+
+print("Processing complete. Files saved in:", output_dir)
+#+end_src
 
 ** Swete_LXX
 - From [[https://github.com/OpenGreekAndLatin/septuagint-dev][Github, septuagint-dev]]
@@ -633,7 +689,6 @@ print("Processing complete! Cleaned texts, variants, and marginal notes saved se
 #+RESULTS:
 : None
 ** Brenton, LXX - USFX
-
 *** Script for extraction resulting in human-readable text & NLP-friendly text - with punctuation
 
 #+begin_src python :results output
@@ -712,7 +767,8 @@ print("Processing complete! Cleaned texts, variants, and marginal notes saved se
                   # Handle <ve /> nodes for human-readable version
                   next_node = verse.getnext()
                   if next_node is not None and next_node.tag == "ve":
-                      paragraph_human.append("\n")  # Insert line break after a verse
+                      pass
+                      # paragraph_human.append("\n")  # Insert line break after a verse
 
               # Add processed paragraph text
               if paragraph_nlp:
@@ -737,9 +793,858 @@ print("Processing complete! Cleaned texts, variants, and marginal notes saved se
 
           output_file_human = os.path.join(output_dir_human, f"{book_name}_human_readable.txt")
           with open(output_file_human, "w", encoding="utf-8") as f:
-              f.write("\n".join(book_human_text) + "\n")  # Ensure new line at end of file
+              f.write("\n".join(line.strip() for line in book_human_text))
           print(f"✅ Saved human-friendly version: {output_file_human}")
 
   print(f"🎉 Processing complete! Check the output folders:\n- NLP Ready: {output_dir_nlp}\n- Human Readable: {output_dir_human}")
 #+end_src
 
+** Brenton & SBLGNT - "."-separated
+#+begin_src python
+import os
+import re
+import xml.etree.ElementTree as ET
+from lxml import etree
+
+# Define input directories
+sblgnt_input_dir = "/home/gnosis/Documents/au_work/main/corpora/opensource/SBLGNT-master/data/sblgnt/xml"
+brenton_usfx_file = "/home/gnosis/Documents/au_work/main/corpora/opensource/brent_sep/grcbrent_usfx/grcbrent_usfx.xml"
+
+# Define main output directory
+main_output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/nlp/punct"
+
+# Ensure subdirectories exist
+os.makedirs(main_output_dir, exist_ok=True)
+
+# Automatically create separate subdirectories
+
+sblgnt_output_dir = os.path.join(main_output_dir, "SBLGNT")
+brenton_output_dir = os.path.join(main_output_dir, "Brenton")
+
+# Ensure subdirectories exist
+os.makedirs(sblgnt_output_dir, exist_ok=True)
+os.makedirs(brenton_output_dir, exist_ok=True)
+
+# Function to clean and split text (only on '.')
+def clean_and_split_text(text):
+    # Keep only Greek characters, spaces, and punctuation
+    cleaned_text = re.sub(r"[^\u0370-\u03FF\u1F00-\u1FFF\s.,;·]", "", text)
+
+    # Fix spaces around punctuation: Remove spaces before , . ; · but keep after
+    cleaned_text = re.sub(r"\s*([,.;·])\s*", r"\1 ", cleaned_text)
+
+    # Ensure we split at periods but retain them
+    sentences = [s.strip() + "." if s and not s.endswith(".") else s.strip() for s in cleaned_text.split(".") if s.strip()]
+    
+    return sentences
+
+# Process SBLGNT XML files
+def process_sblgnt_xml(file_path, output_dir):
+    tree = ET.parse(file_path)
+    root = tree.getroot()
+    book_sentences = []
+    
+    for paragraph in root.findall(".//p"):
+        verse_text = [element.text.strip() for element in paragraph if element.tag in ["w", "prefix", "suffix"] and element.text]
+        full_text = " ".join(verse_text)
+        book_sentences.extend(clean_and_split_text(full_text))
+    
+    output_file = os.path.join(output_dir, os.path.basename(file_path).replace(".xml", "_nlp_ready.txt"))
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(book_sentences))
+    print(f"✅ SBLGNT saved: {output_file}")
+
+# Process Brenton USFX XML
+def process_brenton_usfx(file_path, output_dir):
+    tree = etree.parse(file_path)
+    root = tree.getroot()
+    
+    for book in root.findall("./book"):
+        book_code = book.get("id", "UNKNOWN")
+        book_sentences = []
+        
+        for paragraph in book.findall(".//p"):
+            paragraph_text = []
+            
+            for verse in paragraph.findall(".//v"):
+                raw_text = (verse.text or "") + (verse.tail or "")
+                paragraph_text.append(raw_text)
+            
+            full_text = " ".join(paragraph_text)
+            book_sentences.extend(clean_and_split_text(full_text))
+        
+        output_file = os.path.join(output_dir, f"{book_code}_nlp_ready.txt")
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(book_sentences))
+        print(f"✅ Brenton saved: {output_file}")
+
+# Run extraction for SBLGNT
+for file_name in os.listdir(sblgnt_input_dir):
+    if file_name.endswith(".xml"):
+        process_sblgnt_xml(os.path.join(sblgnt_input_dir, file_name), sblgnt_output_dir)
+
+# Run extraction for Brenton
+process_brenton_usfx(brenton_usfx_file, brenton_output_dir)
+
+print("🎉 Extraction complete!")
+#+end_src
+
+#+RESULTS:
+: None
+
+** Brenton & SBLGNT - continuous string
+#+begin_src python
+  import os
+  import re
+  import xml.etree.ElementTree as ET
+  from lxml import etree
+
+  # Define input directories
+  sblgnt_input_dir = "/home/gnosis/Documents/au_work/main/corpora/opensource/SBLGNT-master/data/sblgnt/xml"
+  brenton_usfx_file = "/home/gnosis/Documents/au_work/main/corpora/opensource/brent_sep/grcbrent_usfx/grcbrent_usfx.xml"
+
+  # Define main output directory
+  main_output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/nlp/continuous"
+
+  # Ensure subdirectories exist
+  os.makedirs(main_output_dir, exist_ok=True)
+
+  # Automatically create separate subdirectories
+  sblgnt_output_dir = os.path.join(main_output_dir, "SBLGNT")
+  brenton_output_dir = os.path.join(main_output_dir, "Brenton")
+
+  # Ensure subdirectories exist
+  os.makedirs(sblgnt_output_dir, exist_ok=True)
+  os.makedirs(brenton_output_dir, exist_ok=True)
+
+  # Function to clean text (without splitting into sentences)
+  def clean_text(text):
+      # Keep only Greek characters, spaces, and punctuation
+      cleaned_text = re.sub(r"[^\u0370-\u03FF\u1F00-\u1FFF\s.,;·]", "", text)
+      # Fix spaces around punctuation: Remove spaces before , . ; · but keep after
+      cleaned_text = re.sub(r"\s*([,.;·])\s*", r"\1 ", cleaned_text)
+      return cleaned_text.strip()
+
+  # Process SBLGNT XML files
+  def process_sblgnt_xml(file_path, output_dir):
+      tree = ET.parse(file_path)
+      root = tree.getroot()
+      full_text = ""
+      
+      for paragraph in root.findall(".//p"):
+          verse_text = [element.text.strip() for element in paragraph if element.tag in ["w", "prefix", "suffix"] and element.text]
+          full_text += " " + clean_text(" ".join(verse_text))
+      
+      output_file = os.path.join(output_dir, os.path.basename(file_path).replace(".xml", "_nlp_ready.txt"))
+      with open(output_file, "w", encoding="utf-8") as f:
+          f.write(full_text.strip())
+      print(f"✅ SBLGNT saved: {output_file}")
+
+  # Process Brenton USFX XML
+  def process_brenton_usfx(file_path, output_dir):
+      tree = etree.parse(file_path)
+      root = tree.getroot()
+      
+      for book in root.findall("./book"):
+          book_code = book.get("id", "UNKNOWN")
+          full_text = ""
+          
+          for paragraph in book.findall(".//p"):
+              paragraph_text = []
+              
+              for verse in paragraph.findall(".//v"):
+                  raw_text = (verse.text or "").strip() + " " + (verse.tail or "").strip()
+                  paragraph_text.append(raw_text.strip())
+              
+              full_text += " " + clean_text(" ".join(paragraph_text)).replace("\n", " ")
+          
+          output_file = os.path.join(output_dir, f"{book_code}_nlp_ready.txt")
+          with open(output_file, "w", encoding="utf-8") as f:
+              f.write(full_text.strip())
+          print(f"✅ Brenton saved: {output_file}")
+          
+  # Extract text from SBLGNT
+  for file_name in os.listdir(sblgnt_input_dir):
+      if file_name.endswith(".xml"):
+          process_sblgnt_xml(os.path.join(sblgnt_input_dir, file_name), sblgnt_output_dir)
+
+  # Extract text from Brenton
+  process_brenton_usfx(brenton_usfx_file, brenton_output_dir)
+
+  print("🎉 Extraction complete!")
+#+end_src
+
+#+RESULTS:
+: None
+
+** Brenton & SBLGNT - sentences as per grc_proiel_trf parser
+#+begin_src python
+import os
+import re
+import xml.etree.ElementTree as ET
+from lxml import etree
+import spacy
+
+MAX_LENGTH = 10**4
+
+# Load spaCy model for Ancient Greek
+nlp = spacy.load("grc_proiel_trf")
+
+# Define input directories
+sblgnt_input_dir = "/home/gnosis/Documents/au_work/main/corpora/opensource/SBLGNT-master/data/sblgnt/xml"
+brenton_usfx_file = "/home/gnosis/Documents/au_work/main/corpora/opensource/brent_sep/grcbrent_usfx/grcbrent_usfx.xml"
+
+# Define main output directory
+main_output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/nlp/sentences"
+os.makedirs(main_output_dir, exist_ok=True)
+sblgnt_output_dir = os.path.join(main_output_dir, "SBLGNT")
+brenton_output_dir = os.path.join(main_output_dir, "Brenton")
+os.makedirs(sblgnt_output_dir, exist_ok=True)
+os.makedirs(brenton_output_dir, exist_ok=True)
+
+# Function to clean text while preserving punctuation
+def clean_text(text):
+    # Keep Greek characters, spaces, and punctuation
+    cleaned_text = re.sub(r"[^\u0370-\u03FF\u1F00-\u1FFF\s.,;·]", "", text)
+    # Normalize spaces around punctuation
+    cleaned_text = re.sub(r"\s*([,.;·])\s*", r"\1 ", cleaned_text)
+    return cleaned_text.strip()
+
+def chunk_text(text, max_length=MAX_LENGTH):
+    """
+    Splits a long text into chunks of at most max_length characters.
+    This implementation splits on words to avoid cutting in the middle of a word.
+    """
+    if len(text) <= max_length:
+        return [text]
+
+    words = text.split()
+    chunks = []
+    current_chunk = []
+    current_length = 0
+
+    for word in words:
+        # +1 accounts for a space between words
+        if current_length + len(word) + 1 > max_length:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = [word]
+            current_length = len(word)
+        else:
+            current_chunk.append(word)
+            current_length += len(word) + 1
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+    return chunks
+
+# Function to process text using spaCy with chunking and nlp.pipe
+def process_with_spacy(text):
+    # Clean the text first
+    text = clean_text(text)
+
+    # If text is too long, split it into manageable chunks
+    chunks = chunk_text(text, MAX_LENGTH)
+
+    # Process the chunks using spaCy's efficient pipe method
+    docs = list(nlp.pipe(chunks))
+
+    # Extract sentences from all processed chunks
+    sentences = []
+    for doc in docs:
+        sentences.extend([sent.text.strip() for sent in doc.sents])
+    return sentences
+
+# Process SBLGNT XML files
+def process_sblgnt_xml(file_path, output_dir):
+    tree = ET.parse(file_path)
+    root = tree.getroot()
+    full_text = ""
+
+    for paragraph in root.findall(".//p"):
+        verse_text = [element.text.strip() for element in paragraph 
+                      if element.tag in ["w", "prefix", "suffix"] and element.text]
+        full_text += " " + " ".join(verse_text)
+
+    # Process text with spaCy for sentence segmentation
+    sentences = process_with_spacy(full_text)
+
+    output_file = os.path.join(output_dir, os.path.basename(file_path).replace(".xml", "_nlp_sentences.txt"))
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(sentences))
+
+    print(f"✅ SBLGNT saved: {output_file}")
+
+def process_brenton_usfx_stream(file_path, output_dir, batch_size=5):
+    tree = etree.parse(file_path)
+    root = tree.getroot()
+
+    for book in root.findall("./book"):
+        book_code = book.get("id", "UNKNOWN")
+        output_file = os.path.join(output_dir, f"{book_code}_nlp_sentences.txt")
+        
+        with open(output_file, "w", encoding="utf-8") as f_out:
+            batch = []  # To collect paragraph chunks
+            for paragraph in book.findall(".//p"):
+                paragraph_text = []
+                for verse in paragraph.findall(".//v"):
+                    raw_text = (verse.text or "").strip() + " " + (verse.tail or "").strip()
+                    paragraph_text.append(raw_text.strip())
+                chunk = " ".join(paragraph_text)
+                
+                if not chunk:
+                    continue
+
+                # Optionally clean the chunk if desired:
+                chunk = clean_text(chunk)
+                
+                batch.append(chunk)
+
+                # When the batch is full, process it with nlp.pipe for efficiency.
+                if len(batch) >= batch_size:
+                    docs = list(nlp.pipe(batch))
+                    for doc in docs:
+                        for sent in doc.sents:
+                            sentence = sent.text.strip()
+                            if sentence:
+                                f_out.write(sentence + "\n")
+                    batch = []  # Reset batch
+
+            # Process any remaining chunks in the batch
+            if batch:
+                docs = list(nlp.pipe(batch))
+                for doc in docs:
+                    for sent in doc.sents:
+                        sentence = sent.text.strip()
+                        if sentence:
+                            f_out.write(sentence + "\n")
+        
+        print(f"✅ Processed and saved: {output_file}")
+# # Extract text from SBLGNT
+# for file_name in os.listdir(sblgnt_input_dir):
+#     if file_name.endswith(".xml"):
+#         process_sblgnt_xml(os.path.join(sblgnt_input_dir, file_name), sblgnt_output_dir)
+
+# Extract text from Brenton
+process_brenton_usfx_stream(brenton_usfx_file, brenton_output_dir)
+
+print("🎉 Sentence extraction complete!")
+#+end_src
+
+
+** Plutarch
+
+*** Extracting text, huma-readable format
+#+begin_src python :results output
+  from lxml import etree
+  import os
+
+  # Define the TEI namespace
+  NS = {'tei': 'http://www.tei-c.org/ns/1.0'}
+
+  def extract_text_from_element(elem):
+      """
+      Extracts all text from the element (and its descendants) and joins it into a single string.
+      """
+      # This gathers all text nodes under elem
+      return " ".join(elem.xpath(".//text()", namespaces=NS)).strip()
+
+  def process_tei_file(input_xml, output_machine, output_human):
+      # Parse the TEI XML file
+      tree = etree.parse(input_xml)
+      root = tree.getroot()
+      
+      machine_output = []  # For machine-readable text (plain text)
+      human_output = []    # For human-readable text (with chapter/section markers)
+      
+      # Locate all chapter divisions.
+      # Chapters are defined as <div type="textpart" subtype="chapter" n="...">
+      chapters = root.xpath("//tei:div[@type='textpart' and @subtype='chapter']", namespaces=NS)
+      
+      for chapter in chapters:
+          chap_num = chapter.get("n", "unknown")
+          # Optionally, look for a <head> element for the chapter title
+          chap_head = chapter.find("tei:head", namespaces=NS)
+          chap_title = chap_head.text.strip() if chap_head is not None and chap_head.text else f"Chapter {chap_num}"
+          
+          # Add a marker for the chapter in both outputs
+          marker = f"=== {chap_title} ==="
+          machine_output.append(marker)
+          human_output.append(marker)
+          
+          # Find sections within the chapter (if any)
+          sections = chapter.xpath("./tei:div[@type='textpart' and @subtype='section']", namespaces=NS)
+          if sections:
+              for section in sections:
+                  sec_num = section.get("n", "unknown")
+                  sec_head = section.find("tei:head", namespaces=NS)
+                  sec_title = sec_head.text.strip() if sec_head is not None and sec_head.text else f"Section {sec_num}"
+                  
+                  sec_marker = f"-- {sec_title} --"
+                  machine_output.append(sec_marker)
+                  human_output.append(sec_marker)
+                  
+                  # Extract text from paragraphs in this section
+                  paragraphs = section.xpath(".//tei:p", namespaces=NS)
+                  sec_text = " ".join([extract_text_from_element(p) for p in paragraphs if extract_text_from_element(p)])
+                  machine_output.append(sec_text)
+                  human_output.append(sec_text)
+          else:
+              # If there are no sections, process the chapter as a whole.
+              paragraphs = chapter.xpath(".//tei:p", namespaces=NS)
+              chap_text = " ".join([extract_text_from_element(p) for p in paragraphs if extract_text_from_element(p)])
+              machine_output.append(chap_text)
+              human_output.append(chap_text)
+      
+      # Write the machine-readable (plain text) output to a file
+      with open(output_machine, "w", encoding="utf-8") as f:
+          f.write("\n".join(machine_output) + "\n")
+      
+      # Write the human-readable output (with chapter and section markers) to another file
+      with open(output_human, "w", encoding="utf-8") as f:
+          f.write("\n".join(human_output) + "\n")
+      
+      print(f"Machine-readable output saved to: {output_machine}")
+      print(f"Human-readable output saved to: {output_human}")
+
+  # Example usage:
+  if __name__ == "__main__":
+      # Replace with the path to your TEI XML file
+      input_xml = "/home/gnosis/Documents/au_work/m# ain/corpora/Plutarch/raw_xml/tlg0007.tlg001.perseus-grc2.xml-Θησεύς.xml"
+      # Files to write the machine-readable and human-readable outputs
+      output_machine = "machine_readable.txt"
+      output_human = "human_readable.txt"
+      
+      process_tei_file(input_xml, output_machine, output_human)
+#+end_src
+
+#+RESULTS:
+
+
+* Extracting names from books
+
+** Names of books from metadata
+ - Saved metadata to .csv file, filtered non-LXX & non-NT material away, now extracting the pure names
+*** Extract data from csv, find title & id, overwrite file
+#+begin_src python
+import pandas as pd
+
+# Define the file path
+file_path = "/home/gnosis/Documents/au_work/main/corpora/cleanedlist.csv"  # Change this to your actual file path
+
+# Read the CSV file, assuming it has a header
+df = pd.read_csv(file_path, usecols=[0, 2], header=None, names=["ID", "Title(s)"])
+
+# Overwrite the original file with the modified data
+df.to_csv(file_path, index=False)
+
+print(f"File '{file_path}' has been updated with columns: ID, Title(s)")
+
+#+end_src
+
+#+RESULTS:
+: None
+
+** Naming books according to ID from metadata
+*** SBLGNT
+Finding the Greek name for every book in order to name id after ID
+
+**** Script
+#+begin_src python :results output
+import os
+import xml.etree.ElementTree as ET
+
+# Define the input directory containing XML files
+input_dir = "/home/gnosis/Documents/au_work/main/corpora/opensource/SBLGNT-master/data/sblgnt/xml"  # Change this to your actual directory path
+
+# Iterate over all XML files in the directory
+for file_name in os.listdir(input_dir):
+    if file_name.endswith(".xml"):
+        file_path = os.path.join(input_dir, file_name)
+        
+        try:
+            # Parse XML
+            tree = ET.parse(file_path)
+            root = tree.getroot()
+
+            # Extract book title
+            title_element = root.find("./title")
+            title_text = title_element.text.strip() if title_element is not None else "❌ No title found"
+
+            # Extract basename (without extension)
+            base_name = os.path.splitext(file_name)[0]
+
+            # Print comparison
+            if base_name in title_text:
+                print(f"✅ Match: {file_name} -> {title_text}")
+            else:
+                print(f"⚠️ Mismatch: {file_name} -> {title_text}")
+
+        except ET.ParseError:
+            print(f"❌ Error parsing {file_name}")
+
+print("\nProcessing complete!")
+
+#+end_src
+
+#+RESULTS:
+#+begin_example
+⚠️ Mismatch: 1Cor.xml -> ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Α
+⚠️ Mismatch: 1John.xml -> ΙΩΑΝΝΟΥ Α
+⚠️ Mismatch: 1Pet.xml -> ΠΕΤΡΟΥ Α
+⚠️ Mismatch: 1Thess.xml -> ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Α
+⚠️ Mismatch: 1Tim.xml -> ΠΡΟΣ ΤΙΜΟΘΕΟΝ Α
+⚠️ Mismatch: 2Cor.xml -> ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Β
+⚠️ Mismatch: 2John.xml -> ΙΩΑΝΝΟΥ Β
+⚠️ Mismatch: 2Pet.xml -> ΠΕΤΡΟΥ Β
+⚠️ Mismatch: 2Thess.xml -> ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Β
+⚠️ Mismatch: 2Tim.xml -> ΠΡΟΣ ΤΙΜΟΘΕΟΝ Β
+⚠️ Mismatch: 3John.xml -> ΙΩΑΝΝΟΥ Γ
+⚠️ Mismatch: Acts.xml -> ΠΡΑΞΕΙΣ ΑΠΟΣΤΟΛΩΝ
+⚠️ Mismatch: Col.xml -> ΠΡΟΣ ΚΟΛΟΣΣΑΕΙΣ
+⚠️ Mismatch: Eph.xml -> ΠΡΟΣ ΕΦΕΣΙΟΥΣ
+⚠️ Mismatch: Gal.xml -> ΠΡΟΣ ΓΑΛΑΤΑΣ
+⚠️ Mismatch: Heb.xml -> ΠΡΟΣ ΕΒΡΑΙΟΥΣ
+⚠️ Mismatch: Jas.xml -> ΙΑΚΩΒΟΥ
+⚠️ Mismatch: John.xml -> ΚΑΤΑ ΙΩΑΝΝΗΝ
+⚠️ Mismatch: Jude.xml -> ΙΟΥΔΑ
+⚠️ Mismatch: Luke.xml -> ΚΑΤΑ ΛΟΥΚΑΝ
+⚠️ Mismatch: Mark.xml -> ΚΑΤΑ ΜΑΡΚΟΝ
+⚠️ Mismatch: Matt.xml -> ΚΑΤΑ ΜΑΘΘΑΙΟΝ
+⚠️ Mismatch: Phil.xml -> ΠΡΟΣ ΦΙΛΙΠΠΗΣΙΟΥΣ
+⚠️ Mismatch: Phlm.xml -> ΠΡΟΣ ΦΙΛΗΜΟΝΑ
+⚠️ Mismatch: Rev.xml -> ΑΠΟΚΑΛΥΨΙΣ ΙΩΑΝΝΟΥ
+⚠️ Mismatch: Rom.xml -> ΠΡΟΣ ΡΩΜΑΙΟΥΣ
+⚠️ Mismatch: Titus.xml -> ΠΡΟΣ ΤΙΤΟΝ
+
+Processing complete!
+#+end_example
+
+*** Brenton
+
+**** Script
+#+begin_src python :results output
+import xml.etree.ElementTree as ET
+
+# Path to the XML file
+xml_file = "/home/gnosis/Documents/au_work/main/corpora/opensource/brent_sep/grcbrent_usfx/BookNames.xml"  # Change this to the actual path of your file
+
+# Parse the XML file
+tree = ET.parse(xml_file)
+root = tree.getroot()
+
+# Iterate over each <book> entry and extract attributes
+books_data = []
+for book in root.findall("book"):
+    book_info = {
+        "code": book.get("code"),
+        "abbr": book.get("abbr"),
+        "short": book.get("short"),
+        "long": book.get("long"),
+        "alt": book.get("alt") if book.get("alt") else "N/A"  # Use "N/A" if alt is missing
+    }
+    books_data.append(book_info)
+
+# Print results
+for book in books_data:
+    print(f"Code: {book['code']}")
+    print(f"  Abbreviation: {book['abbr']}")
+    print(f"  Short Name: {book['short']}")
+    print(f"  Long Name: {book['long']}")
+    print(f"  Alternative Name: {book['alt']}")
+    print("-" * 40)
+
+#+end_src
+#+RESULTS:
+
+*** Unifying
+
+**** v1
+#+begin_src python :results output
+  import os
+  import pandas as pd
+  import xml.etree.ElementTree as ET
+
+  # Directories and files
+  sblgnt_dir = "/home/gnosis/Documents/au_work/main/corpora/opensource/SBLGNT-master/data/sblgnt/xml"
+  brenton_xml_file = "/home/gnosis/Documents/au_work/main/corpora/opensource/brent_sep/grcbrent_usfx/BookNames.xml"
+
+  # Initialize list to store data
+  book_data = []
+
+  ### PROCESS SBLGNT ###
+  for file_name in os.listdir(sblgnt_dir):
+      if file_name.endswith(".xml"):
+          file_path = os.path.join(sblgnt_dir, file_name)
+
+          try:
+              tree = ET.parse(file_path)
+              root = tree.getroot()
+
+              # Extract book abbreviation (from <book id="">)
+              book_element = root.find("./book")
+              # Correct way to extract the book id
+              book_abbreviation = root.get("id", "❌ No ID")  # Directly access the attribute
+
+
+              # Extract Greek title (from <title>)
+              title_element = root.find("./title")
+              greek_title = title_element.text.strip() if title_element is not None else "❌ No title"
+              # Extract file name
+              base_name = os.path.splitext(file_name)[0]
+              # Append to list
+              book_data.append(["SBLGNT", book_abbreviation, greek_title, "N/A"])  # No "Long Title" in SBLGNT
+
+          except ET.ParseError:
+              print(f"❌ Error parsing {file_name}")
+
+  ### PROCESS BRENTON LXX ###
+  tree = ET.parse(brenton_xml_file)
+  root = tree.getroot()
+
+  for book in root.findall("book"):
+      book_abbreviation = book.get("code", "❌ No Code")
+      greek_title = book.get("short", "❌ No Short Name")
+      
+      long_title = book.get("long", "❌ No Long Name")
+      alt_name = book.get("alt", "")
+
+      # Combine Long Title and Alternative Name
+      long_or_alt = long_title if not alt_name else f"{long_title} OR {alt_name}"
+
+      # Append to list
+      book_data.append(["LXX_Brenton", book_abbreviation, greek_title, long_or_alt])
+
+  # Convert to Pandas DataFrame
+  df = pd.DataFrame(book_data, columns=["Source", "Book Abbreviation", "Greek Title", "Long Title OR Alternative Name"])
+
+  # Save to CSV
+  output_file = "book_data.csv"
+  df.to_csv(output_file, index=False, encoding="utf-8")
+
+  print(f"✅ Data saved to {output_file}")
+
+#+end_src
+
+#+RESULTS:
+: ✅ Data saved to book_data.csv
+
+**** v3 - .csv produced, NEED TO CHECK THROUGH
+#+begin_src python :results output
+import re
+import difflib
+import pandas as pd
+
+# Function to remove parenthetical parts from a string
+def remove_parentheticals(text):
+    return re.sub(r"\s*\(.*?\)", "", text).strip()
+
+# Function to split a cleanedlist title string into components
+def parse_cleanedlist_title(title_str):
+    """
+    Expected format: "English Title - Abbreviation-Greek Title (extra info)"
+    Returns a dict with keys:
+      - english: part before first "-"
+      - candidate_abbr: first part after "-" split by "-"
+      - candidate_greek: second part after "-" with parentheticals removed (if present)
+    """
+    parts = title_str.split("-", 1)
+    if len(parts) < 2:
+        return {"english": title_str.strip(), "candidate_abbr": "", "candidate_greek": ""}
+    english = parts[0].strip()
+    remainder = parts[1].strip()
+    # Now split remainder by "-" if possible:
+    rem_parts = remainder.split("-", 1)
+    candidate_abbr = rem_parts[0].strip()
+    candidate_greek = ""
+    if len(rem_parts) > 1:
+        candidate_greek = remove_parentheticals(rem_parts[1].strip())
+    return {"english": english, "candidate_abbr": candidate_abbr, "candidate_greek": candidate_greek}
+
+# Read the cleanedlist.csv (assuming no headers, with two columns)
+cleanedlist_path = "/home/gnosis/Documents/au_work/main/corpora/cleanedlist.csv"
+cleaned_df = pd.read_csv(cleanedlist_path, header=None, names=["Metadata_ID", "Metadata_Title"])
+
+# Parse the cleanedlist titles and add columns for easier matching
+cleaned_df[['English_Part', 'Candidate_Abbr', 'Candidate_Greek']] = cleaned_df["Metadata_Title"].apply(
+    lambda t: pd.Series(parse_cleanedlist_title(t))
+)
+
+# Read the book_data.csv (which should have columns: Source, Book Abbreviation, Greek Title, Long Title OR Alternative Name)
+book_data_path = "/home/gnosis/Documents/au_work/main/comp_antiquity/combined_approach/extract/book_data.csv"
+book_df = pd.read_csv(book_data_path)
+
+# Function to compute a fuzzy matching ratio
+def fuzzy_ratio(a, b):
+    return difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+# Function to find the best match for each book entry
+def find_best_match_for_book(book_row, cleaned_df, cutoff=0.6):
+    best_score = 0
+    best_id = None
+    best_title = None  # Store matched title
+    
+    # Get book data candidates (all strings)
+    book_abbr = str(book_row["Book Abbreviation"]).strip()
+    greek_title = str(book_row["Greek Title"]).strip()
+    long_alt = str(book_row["Long Title OR Alternative Name"]).strip()
+    
+    # Loop over cleanedlist rows:
+    for _, cl_row in cleaned_df.iterrows():
+        scores = []
+        # Compare candidate_abbr to book_abbr
+        if cl_row["Candidate_Abbr"]:
+            score1 = fuzzy_ratio(cl_row["Candidate_Abbr"], book_abbr)
+            scores.append(score1)
+        # Compare candidate_greek to greek_title
+        if cl_row["Candidate_Greek"]:
+            score2 = fuzzy_ratio(cl_row["Candidate_Greek"], greek_title)
+            scores.append(score2)
+            # Also compare candidate_greek to long_alt if available
+            score3 = fuzzy_ratio(cl_row["Candidate_Greek"], long_alt)
+            scores.append(score3)
+        
+        if scores:
+            max_score = max(scores)
+            if max_score > best_score and max_score >= cutoff:
+                best_score = max_score
+                best_id = cl_row["Metadata_ID"]
+                best_title = cl_row["Metadata_Title"]  # Store matched title
+    
+    return best_id, best_title, best_score
+
+# Apply matching to each book in book_df
+matched_ids = []
+matched_titles = []
+match_scores = []
+meta_id_names = []
+
+for _, book_row in book_df.iterrows():
+    best_id, best_title, score = find_best_match_for_book(book_row, cleaned_df, cutoff=0.6)
+    
+    matched_ids.append(best_id if best_id is not None else "No Match")
+    matched_titles.append(best_title if best_title is not None else "No Match")
+    match_scores.append(score)
+    
+    # Look up the actual title based on best_id
+    if best_id and best_id in cleaned_df["Metadata_ID"].values:
+        meta_id_name = cleaned_df.loc[cleaned_df["Metadata_ID"] == best_id, "Metadata_Title"].values[0]
+    else:
+        meta_id_name = "No Match"
+    
+    meta_id_names.append(meta_id_name)
+
+# Add the new columns to book_df
+book_df["Metadata_ID"] = matched_ids
+book_df["Metadata_Title"] = matched_titles
+book_df["Match_Score"] = match_scores
+book_df["META_ID_NAME"] = meta_id_names  # Add the new column
+
+# Save the updated book_df to a CSV file
+output_file = "matched_book_data.csv"
+book_df.to_csv(output_file, index=False, encoding="utf-8")
+
+print("Matching complete. Results saved to:", output_file)
+#+end_src
+
+#+RESULTS:
+: Matching complete. Results saved to: matched_book_data.csv
+
+* Rename
+
+** First, fixing the name for already extracted files
+
+*** Script for renaming files with their correct id
+#+begin_src python :results output
+import os
+
+# Define the mapping of filenames to Greek titles
+greek_title_map = {
+    "1Cor": "ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Α",
+    "1John": "ΙΩΑΝΝΟΥ Α",
+    "1Pet": "ΠΕΤΡΟΥ Α",
+    "1Thess": "ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Α",
+    "1Tim": "ΠΡΟΣ ΤΙΜΟΘΕΟΝ Α",
+    "2Cor": "ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Β",
+    "2John": "ΙΩΑΝΝΟΥ Β",
+    "2Pet": "ΠΕΤΡΟΥ Β",
+    "2Thess": "ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Β",
+    "2Tim": "ΠΡΟΣ ΤΙΜΟΘΕΟΝ Β",
+    "3John": "ΙΩΑΝΝΟΥ Γ",
+    "Acts": "ΠΡΑΞΕΙΣ ΑΠΟΣΤΟΛΩΝ",
+    "Col": "ΠΡΟΣ ΚΟΛΟΣΣΑΕΙΣ",
+    "Eph": "ΠΡΟΣ ΕΦΕΣΙΟΥΣ",
+    "Gal": "ΠΡΟΣ ΓΑΛΑΤΑΣ",
+    "Heb": "ΠΡΟΣ ΕΒΡΑΙΟΥΣ",
+    "Jas": "ΙΑΚΩΒΟΥ",
+    "John": "ΚΑΤΑ ΙΩΑΝΝΗΝ",
+    "Jude": "ΙΟΥΔΑ",
+    "Luke": "ΚΑΤΑ ΛΟΥΚΑΝ",
+    "Mark": "ΚΑΤΑ ΜΑΡΚΟΝ",
+    "Matt": "ΚΑΤΑ ΜΑΘΘΑΙΟΝ",
+    "Phil": "ΠΡΟΣ ΦΙΛΙΠΠΗΣΙΟΥΣ",
+    "Phlm": "ΠΡΟΣ ΦΙΛΗΜΟΝΑ",
+    "Rev": "ΑΠΟΚΑΛΥΨΙΣ ΙΩΑΝΝΟΥ",
+    "Rom": "ΠΡΟΣ ΡΩΜΑΙΟΥΣ",
+    "Titus": "ΠΡΟΣ ΤΙΤΟΝ"
+}
+
+# Define the root directory containing the files
+root_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct"  # Change this to your actual directory
+
+# Iterate through all subdirectories and files
+for dirpath, _, filenames in os.walk(root_dir):
+    for file_name in filenames:
+        # Extract the file prefix before the first "_"
+        base_name, ext = os.path.splitext(file_name)
+
+        # Split at "_" to check for a known book abbreviation
+        parts = base_name.split("_", 1)
+        if len(parts) < 2:
+            continue  # Skip files that don't match the pattern
+        
+        book_prefix, suffix = parts  # Example: "Titus", "nlp_ready"
+        
+        # Check if the book prefix exists in the mapping
+        if book_prefix in greek_title_map:
+            new_name = f"{greek_title_map[book_prefix]}_{suffix}{ext}"  # Preserve suffix and extension
+            old_path = os.path.join(dirpath, file_name)
+            new_path = os.path.join(dirpath, new_name)
+
+            # Rename the file
+            os.rename(old_path, new_path)
+            print(f"Renamed in {dirpath}: {file_name} -> {new_name}")
+
+print("\n✅ Renaming complete across all subdirectories!")
+#+end_src
+
+#+RESULTS:
+#+begin_example
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 1Cor_nlp_ready.txt -> ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Α_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 1John_nlp_ready.txt -> ΙΩΑΝΝΟΥ Α_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 1Pet_nlp_ready.txt -> ΠΕΤΡΟΥ Α_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 1Thess_nlp_ready.txt -> ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Α_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 1Tim_nlp_ready.txt -> ΠΡΟΣ ΤΙΜΟΘΕΟΝ Α_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 2Cor_nlp_ready.txt -> ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Β_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 2John_nlp_ready.txt -> ΙΩΑΝΝΟΥ Β_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 2Pet_nlp_ready.txt -> ΠΕΤΡΟΥ Β_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 2Thess_nlp_ready.txt -> ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Β_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 2Tim_nlp_ready.txt -> ΠΡΟΣ ΤΙΜΟΘΕΟΝ Β_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 3John_nlp_ready.txt -> ΙΩΑΝΝΟΥ Γ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Acts_nlp_ready.txt -> ΠΡΑΞΕΙΣ ΑΠΟΣΤΟΛΩΝ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Col_nlp_ready.txt -> ΠΡΟΣ ΚΟΛΟΣΣΑΕΙΣ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Eph_nlp_ready.txt -> ΠΡΟΣ ΕΦΕΣΙΟΥΣ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Gal_nlp_ready.txt -> ΠΡΟΣ ΓΑΛΑΤΑΣ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Heb_nlp_ready.txt -> ΠΡΟΣ ΕΒΡΑΙΟΥΣ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Jas_nlp_ready.txt -> ΙΑΚΩΒΟΥ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: John_nlp_ready.txt -> ΚΑΤΑ ΙΩΑΝΝΗΝ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Jude_nlp_ready.txt -> ΙΟΥΔΑ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Luke_nlp_ready.txt -> ΚΑΤΑ ΛΟΥΚΑΝ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Mark_nlp_ready.txt -> ΚΑΤΑ ΜΑΡΚΟΝ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Matt_nlp_ready.txt -> ΚΑΤΑ ΜΑΘΘΑΙΟΝ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Phil_nlp_ready.txt -> ΠΡΟΣ ΦΙΛΙΠΠΗΣΙΟΥΣ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Phlm_nlp_ready.txt -> ΠΡΟΣ ΦΙΛΗΜΟΝΑ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Rev_nlp_ready.txt -> ΑΠΟΚΑΛΥΨΙΣ ΙΩΑΝΝΟΥ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Rom_nlp_ready.txt -> ΠΡΟΣ ΡΩΜΑΙΟΥΣ_nlp_ready.txt
+Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Titus_nlp_ready.txt -> ΠΡΟΣ ΤΙΤΟΝ_nlp_ready.txt
+
+✅ Renaming complete across all subdirectories!
+#+end_example
