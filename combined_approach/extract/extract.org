@@ -1134,90 +1134,515 @@ print("🎉 Sentence extraction complete!")
 
 *** Extracting text, huma-readable format
 #+begin_src python :results output
-  from lxml import etree
-  import os
+from lxml import etree
+import os
 
-  # Define the TEI namespace
-  NS = {'tei': 'http://www.tei-c.org/ns/1.0'}
+# Define the TEI XML namespace
+NS = {'tei': 'http://www.tei-c.org/ns/1.0'}
 
-  def extract_text_from_element(elem):
-      """
-      Extracts all text from the element (and its descendants) and joins it into a single string.
-      """
-      # This gathers all text nodes under elem
-      return " ".join(elem.xpath(".//text()", namespaces=NS)).strip()
+def extract_text_without_notes_and_bibl(element):
+    """
+    Extracts all text from an element while excluding text inside <note>, <bibl>, and <cit> elements.
+    """
+    texts = element.xpath(
+        ".//text()[not(ancestor::*[self::tei:note or self::tei:bibl or self::tei:cit])]",
+        namespaces=NS
+    )
+    return " ".join(t.strip() for t in texts if t.strip())
 
-  def process_tei_file(input_xml, output_machine, output_human):
-      # Parse the TEI XML file
-      tree = etree.parse(input_xml)
-      root = tree.getroot()
-      
-      machine_output = []  # For machine-readable text (plain text)
-      human_output = []    # For human-readable text (with chapter/section markers)
-      
-      # Locate all chapter divisions.
-      # Chapters are defined as <div type="textpart" subtype="chapter" n="...">
-      chapters = root.xpath("//tei:div[@type='textpart' and @subtype='chapter']", namespaces=NS)
-      
-      for chapter in chapters:
-          chap_num = chapter.get("n", "unknown")
-          # Optionally, look for a <head> element for the chapter title
-          chap_head = chapter.find("tei:head", namespaces=NS)
-          chap_title = chap_head.text.strip() if chap_head is not None and chap_head.text else f"Chapter {chap_num}"
-          
-          # Add a marker for the chapter in both outputs
-          marker = f"=== {chap_title} ==="
-          machine_output.append(marker)
-          human_output.append(marker)
-          
-          # Find sections within the chapter (if any)
-          sections = chapter.xpath("./tei:div[@type='textpart' and @subtype='section']", namespaces=NS)
-          if sections:
-              for section in sections:
-                  sec_num = section.get("n", "unknown")
-                  sec_head = section.find("tei:head", namespaces=NS)
-                  sec_title = sec_head.text.strip() if sec_head is not None and sec_head.text else f"Section {sec_num}"
-                  
-                  sec_marker = f"-- {sec_title} --"
-                  machine_output.append(sec_marker)
-                  human_output.append(sec_marker)
-                  
-                  # Extract text from paragraphs in this section
-                  paragraphs = section.xpath(".//tei:p", namespaces=NS)
-                  sec_text = " ".join([extract_text_from_element(p) for p in paragraphs if extract_text_from_element(p)])
-                  machine_output.append(sec_text)
-                  human_output.append(sec_text)
-          else:
-              # If there are no sections, process the chapter as a whole.
-              paragraphs = chapter.xpath(".//tei:p", namespaces=NS)
-              chap_text = " ".join([extract_text_from_element(p) for p in paragraphs if extract_text_from_element(p)])
-              machine_output.append(chap_text)
-              human_output.append(chap_text)
-      
-      # Write the machine-readable (plain text) output to a file
-      with open(output_machine, "w", encoding="utf-8") as f:
-          f.write("\n".join(machine_output) + "\n")
-      
-      # Write the human-readable output (with chapter and section markers) to another file
-      with open(output_human, "w", encoding="utf-8") as f:
-          f.write("\n".join(human_output) + "\n")
-      
-      print(f"Machine-readable output saved to: {output_machine}")
-      print(f"Human-readable output saved to: {output_human}")
+def process_paragraph(p):
+    """
+    Processes a paragraph <p> element:
+    - Extracts main text while excluding <note>, <bibl>, and <cit>.
+    - Extracts quotes separately and marks them as [QUOTE].
+    """
+    n_elem = p.find("tei:n", namespaces=NS)
+    para_number = n_elem.text.strip() if n_elem is not None and n_elem.text else ""
 
-  # Example usage:
-  if __name__ == "__main__":
-      # Replace with the path to your TEI XML file
-      input_xml = "/home/gnosis/Documents/au_work/m# ain/corpora/Plutarch/raw_xml/tlg0007.tlg001.perseus-grc2.xml-Θησεύς.xml"
-      # Files to write the machine-readable and human-readable outputs
-      output_machine = "machine_readable.txt"
-      output_human = "human_readable.txt"
-      
-      process_tei_file(input_xml, output_machine, output_human)
+    # Extract main text while ignoring <note>, <bibl>, and <cit>
+    main_text = extract_text_without_notes_and_bibl(p)
+
+    # Extract and separate out quotes
+    quotes = []
+    for q in p.xpath(".//tei:quote", namespaces=NS):
+        quote_text = " ".join(q.xpath(".//text()", namespaces=NS)).strip()
+        if quote_text and quote_text not in quotes:  # Avoid duplicate quotes
+            quotes.append(quote_text)
+
+    # Prefix main text with paragraph number if available
+    if para_number:
+        main_text = f"[{para_number}] {main_text}"
+
+    return main_text, quotes
+
+def process_tei_file(input_file, output_human):
+    """
+    Processes a TEI XML file:
+    - Extracts structured chapters and sections (if available).
+    - Processes paragraphs while keeping numbering and quotes intact.
+    - Saves human-readable output to a file.
+    """
+    try:
+        tree = etree.parse(input_file)
+    except Exception as e:
+        print(f"❌ Error parsing {input_file}: {e}")
+        return
+
+    root = tree.getroot()
+    human_lines = []  # To accumulate human-readable text
+
+    # Attempt to locate chapters
+    chapters = root.xpath("//tei:div[@type='textpart' and @subtype='chapter']", namespaces=NS)
+
+    if chapters:
+        for chapter in chapters:
+            chap_num = chapter.get("n", "unknown")
+            chap_head = chapter.find("tei:head", namespaces=NS)
+            chap_title = chap_head.text.strip() if chap_head is not None and chap_head.text else f"Chapter {chap_num}"
+            chapter_marker = f"=== {chap_title} ==="
+            human_lines.append(chapter_marker)
+
+            # Locate sections within the chapter
+            sections = chapter.xpath(".//tei:div[@type='textpart' and @subtype='section']", namespaces=NS)
+            if sections:
+                for section in sections:
+                    sec_num = section.get("n", "unknown")
+                    sec_head = section.find("tei:head", namespaces=NS)
+                    sec_title = sec_head.text.strip() if sec_head is not None and sec_head.text else f"Section {sec_num}"
+                    section_marker = f"-- {sec_title} --"
+                    human_lines.append(section_marker)
+
+                    paragraphs = section.xpath(".//tei:p", namespaces=NS)
+                    for p in paragraphs:
+                        main_text, quotes = process_paragraph(p)
+                        if main_text:
+                            human_lines.append(main_text)
+                        for quote in quotes:
+                            human_lines.append(f"[QUOTE] {quote}")
+            else:
+                # No sections; process paragraphs directly in the chapter
+                paragraphs = chapter.xpath(".//tei:p", namespaces=NS)
+                for p in paragraphs:
+                    main_text, quotes = process_paragraph(p)
+                    if main_text:
+                        human_lines.append(main_text)
+                    for quote in quotes:
+                        human_lines.append(f"[QUOTE] {quote}")
+    else:
+        # Fallback: process all paragraphs under <tei:text>
+        print(f"⚠ No chapters found in {input_file}; processing entire text as one unit.")
+        human_lines.append("=== Entire Text ===")
+        paragraphs = root.xpath("//tei:text//tei:p", namespaces=NS)
+        for p in paragraphs:
+            main_text, quotes = process_paragraph(p)
+            if main_text:
+                human_lines.append(main_text)
+            for quote in quotes:
+                human_lines.append(f"[QUOTE] {quote}")
+
+    # Write to output file
+    try:
+        with open(output_human, "w", encoding="utf-8") as f:
+            f.write("\n".join(human_lines) + "\n")
+        print(f"✅ Processed {input_file} → Saved to {output_human}")
+    except Exception as e:
+        print(f"❌ Error writing output to {output_human}: {e}")
+
+def process_folder(input_folder, human_output_dir):
+    """
+    Iterates through all .xml files in the input_folder,
+    processing each file to extract structured text.
+    Saves human-readable output in human_output_dir.
+    """
+    os.makedirs(human_output_dir, exist_ok=True)
+
+    for filename in os.listdir(input_folder):
+        if filename.lower().endswith(".xml"):
+            input_file = os.path.join(input_folder, filename)
+            base_name = os.path.splitext(filename)[0]
+            output_human = os.path.join(human_output_dir, f"{base_name}_human_readable.txt")
+            process_tei_file(input_file, output_human)
+
+# Usage Example:
+input_folder = "/home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/"
+human_output_dir = "/home/gnosis/Documents/au_work/main/results/plutarch/human"
+
+process_folder(input_folder, human_output_dir)
 #+end_src
 
 #+RESULTS:
+#+begin_example
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg064.perseus-grc2.xml-Artaxerxes.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg064.perseus-grc2.xml-Artaxerxes_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg146.1st1K-grc1.xml-Παροιμίαι_αἷς_Ἀλεξανδρεῖς_ἐχρῶντο.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg146.1st1K-grc1.xml-Παροιμίαι_αἷς_Ἀλεξανδρεῖς_ἐχρῶντο.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg146.1st1K-grc1.xml-Παροιμίαι_αἷς_Ἀλεξανδρεῖς_ἐχρῶντο_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg147.1st1K-grc1.xml-Ἐκλογὴ_περὶ_τῶν_ἀδυνάτων.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg147.1st1K-grc1.xml-Ἐκλογὴ_περὶ_τῶν_ἀδυνάτων.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg147.1st1K-grc1.xml-Ἐκλογὴ_περὶ_τῶν_ἀδυνάτων_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg049.perseus-grc2.xml-Phocion.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg049.perseus-grc2.xml-Phocion_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg126.perseus-grc2.xml-Περὶ_τοῦ_ἐμφαινομένου_προσώπου_τῷ_κύκλῳ_τῆς_σελήνης.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg126.perseus-grc2.xml-Περὶ_τοῦ_ἐμφαινομένου_προσώπου_τῷ_κύκλῳ_τῆς_σελήνης.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg126.perseus-grc2.xml-Περὶ_τοῦ_ἐμφαινομένου_προσώπου_τῷ_κύκλῳ_τῆς_σελήνης_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg063.perseus-grc2.xml-Aratus.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg063.perseus-grc2.xml-Aratus_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg081.perseus-grc3.xml-Ἀποφθέγματα_βασιλέων_καὶ_στρατηγῶν.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg081.perseus-grc3.xml-Ἀποφθέγματα_βασιλέων_καὶ_στρατηγῶν_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg081.perseus-grc4.xml-Ἀποφθέγματα_βασιλέων_καὶ_στρατηγῶν.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg081.perseus-grc4.xml-Ἀποφθέγματα_βασιλέων_καὶ_στρατηγῶν_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg044.perseus-grc2.xml-Ἀγησίλαος.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg044.perseus-grc2.xml-Ἀγησίλαος_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg075.perseus-grc2.xml-Περὶ_ἀρετῆς_καὶ_κακιάς.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg075.perseus-grc2.xml-Περὶ_ἀρετῆς_καὶ_κακιάς.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg075.perseus-grc2.xml-Περὶ_ἀρετῆς_καὶ_κακιάς_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg022.perseus-grc2.xml-Μάρκελλος.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg022.perseus-grc2.xml-Μάρκελλος_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg045.perseus-grc2.xml-Πομπήϊος.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg045.perseus-grc2.xml-Πομπήϊος_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg141.perseus-grc2.xml-Εἰ_καλῶς_εἴρηται_τὸ_λάθε_βιώτας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg141.perseus-grc2.xml-Εἰ_καλῶς_εἴρηται_τὸ_λάθε_βιώτας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg141.perseus-grc2.xml-Εἰ_καλῶς_εἴρηται_τὸ_λάθε_βιώτας_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg117.perseus-grc2.xml-Εἰ_πρεσβυτέρῳ_πολιτευτέον.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg117.perseus-grc2.xml-Εἰ_πρεσβυτέρῳ_πολιτευτέον.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg117.perseus-grc2.xml-Εἰ_πρεσβυτέρῳ_πολιτευτέον_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg030.perseus-grc2.xml-Pyrrhus.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg030.perseus-grc2.xml-Pyrrhus_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg019.perseus-grc2.xml-Aemilius_Paulus.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg019.perseus-grc2.xml-Aemilius_Paulus_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg082.perseus-grc3.xml-Ἀποφθέγματα_Λακωνικά.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg082.perseus-grc3.xml-Ἀποφθέγματα_Λακωνικά_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg082.perseus-grc4.xml-Ἀποφθέγματα_Λακωνικά.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg082.perseus-grc4.xml-Ἀποφθέγματα_Λακωνικά_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg125.perseus-grc2.xml-Αἴτια_φυσικά.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg125.perseus-grc2.xml-Αἴτια_φυσικά.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg125.perseus-grc2.xml-Αἴτια_φυσικά_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg069.perseus-grc2.xml-Περὶ_τοῦ_ἀκούειν.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg069.perseus-grc2.xml-Περὶ_τοῦ_ἀκούειν.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg069.perseus-grc2.xml-Περὶ_τοῦ_ἀκούειν_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg016.perseus-grc2.xml-Γάϊος_Μάρκιος.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg016.perseus-grc2.xml-Γάϊος_Μάρκιος_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg085.perseus-grc3.xml-Συναγωγὴ_ἱστοριῶν_παραλλήλων_Ἑλληνικῶν_καὶ_Ῥωμαϊκῶν.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg085.perseus-grc3.xml-Συναγωγὴ_ἱστοριῶν_παραλλήλων_Ἑλληνικῶν_καὶ_Ῥωμαϊκῶν.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg085.perseus-grc3.xml-Συναγωγὴ_ἱστοριῶν_παραλλήλων_Ἑλληνικῶν_καὶ_Ῥωμαϊκῶν_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg085.perseus-grc4.xml-Συναγωγὴ_ἱστοριῶν_παραλλήλων_Ἑλληνικῶν_καὶ_Ῥωμαϊκῶν.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg085.perseus-grc4.xml-Συναγωγὴ_ἱστοριῶν_παραλλήλων_Ἑλληνικῶν_καὶ_Ῥωμαϊκῶν.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg085.perseus-grc4.xml-Συναγωγὴ_ἱστοριῶν_παραλλήλων_Ἑλληνικῶν_καὶ_Ῥωμαϊκῶν_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg011.perseus-grc2.xml-Κάμιλλος.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg011.perseus-grc2.xml-Κάμιλλος_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg031.perseus-grc2.xml-Caius_Marius.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg031.perseus-grc2.xml-Caius_Marius_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg096.perseus-grc2.xml-Περὶ_εὐθυμίας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg096.perseus-grc2.xml-Περὶ_εὐθυμίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg096.perseus-grc2.xml-Περὶ_εὐθυμίας_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg052.perseus-grc1.xml-Tiberius_and_Caius_Gracchus.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg052.perseus-grc1.xml-Tiberius_and_Caius_Gracchus_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg061.perseus-grc2.xml-Brutus.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg061.perseus-grc2.xml-Brutus_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg109.perseus-grc2.xml-Περὶ_τοῦ_Σωκράτους_δαιμονίου.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg109.perseus-grc2.xml-Περὶ_τοῦ_Σωκράτους_δαιμονίου.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg109.perseus-grc2.xml-Περὶ_τοῦ_Σωκράτους_δαιμονίου_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg116.perseus-grc2.xml-Πρὸς_ἡγεμόνα_ἀπαίδευτον.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg116.perseus-grc2.xml-Πρὸς_ἡγεμόνα_ἀπαίδευτον.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg116.perseus-grc2.xml-Πρὸς_ἡγεμόνα_ἀπαίδευτον_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg131.perseus-grc2.xml-Περὶ_σαρκοφαγίας_λόγος_α′.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg131.perseus-grc2.xml-Περὶ_σαρκοφαγίας_λόγος_α′.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg131.perseus-grc2.xml-Περὶ_σαρκοφαγίας_λόγος_α′_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg102.perseus-grc2.xml-Περὶ_πολυπραγμοσύνης.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg102.perseus-grc2.xml-Περὶ_πολυπραγμοσύνης.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg102.perseus-grc2.xml-Περὶ_πολυπραγμοσύνης_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg048.perseus-grc2.xml-Caesar.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg048.perseus-grc2.xml-Caesar_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg060.perseus-grc2.xml-Dion.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg060.perseus-grc2.xml-Dion_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg039.perseus-grc2.xml-Κράσσος.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg039.perseus-grc2.xml-Κράσσος_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg041.perseus-grc2.xml-Eumenes.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg041.perseus-grc2.xml-Eumenes_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg106.perseus-grc2.xml-Περὶ_τοῦ_ἑαυτὸν_ἐπαινεῖν_ἀνεπιφθόνως.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg106.perseus-grc2.xml-Περὶ_τοῦ_ἑαυτὸν_ἐπαινεῖν_ἀνεπιφθόνως.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg106.perseus-grc2.xml-Περὶ_τοῦ_ἑαυτὸν_ἐπαινεῖν_ἀνεπιφθόνως_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg077.perseus-grc2.xml-Ὑγιεινὰ_παραγγέλματα.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg077.perseus-grc2.xml-Ὑγιεινὰ_παραγγέλματα.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg077.perseus-grc2.xml-Ὑγιεινὰ_παραγγέλματα_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg134.perseus-grc2.xml-Περὶ_τῆς_ἐν_Τιμαίῳ_ψυχογονίας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg134.perseus-grc2.xml-Περὶ_τῆς_ἐν_Τιμαίῳ_ψυχογονίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg134.perseus-grc2.xml-Περὶ_τῆς_ἐν_Τιμαίῳ_ψυχογονίας_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg083.perseus-grc3.xml-Γυναικῶν_ἀρεταί.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg083.perseus-grc3.xml-Γυναικῶν_ἀρεταί.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg083.perseus-grc3.xml-Γυναικῶν_ἀρεταί_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg083.perseus-grc4.xml-Γυναικῶν_ἀρεταί.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg083.perseus-grc4.xml-Γυναικῶν_ἀρεταί.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg083.perseus-grc4.xml-Γυναικῶν_ἀρεταί_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg038.perseus-grc2.xml-Νικίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg038.perseus-grc2.xml-Νικίας_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg046.perseus-grc2.xml-Ἀγησιλάου_καὶ_Πομπηΐου_σύγκρισις.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg046.perseus-grc2.xml-Ἀγησιλάου_καὶ_Πομπηΐου_σύγκρισις_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg082a.perseus-grc4.xml-Τὰ_παλαιὰ_τῶν_Λακεδαινίων_ἐπιτηδεύματα.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg082a.perseus-grc4.xml-Τὰ_παλαιὰ_τῶν_Λακεδαινίων_ἐπιτηδεύματα.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg082a.perseus-grc4.xml-Τὰ_παλαιὰ_τῶν_Λακεδαινίων_ἐπιτηδεύματα_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg082a.perseus-grc3.xml-Τὰ_παλαιὰ_τῶν_Λακεδαινίων_ἐπιτηδεύματα.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg082a.perseus-grc3.xml-Τὰ_παλαιὰ_τῶν_Λακεδαινίων_ἐπιτηδεύματα.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg082a.perseus-grc3.xml-Τὰ_παλαιὰ_τῶν_Λακεδαινίων_ἐπιτηδεύματα_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg111.perseus-grc2.xml-Παραμυθητικός_εἰς_τὴν_γυναῖκα_τὴν_αὑτου.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg111.perseus-grc2.xml-Παραμυθητικός_εἰς_τὴν_γυναῖκα_τὴν_αὑτου.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg111.perseus-grc2.xml-Παραμυθητικός_εἰς_τὴν_γυναῖκα_τὴν_αὑτου_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg136.perseus-grc2.xml-Περὶ_Στωικῶν_ἐνιγμάτων.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg136.perseus-grc2.xml-Περὶ_Στωικῶν_ἐνιγμάτων.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg136.perseus-grc2.xml-Περὶ_Στωικῶν_ἐνιγμάτων_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg130.perseus-grc2.xml-Περὶ_τοῦ_τὰ_ἄλογα_λόγῳ_χρῆσθαι.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg130.perseus-grc2.xml-Περὶ_τοῦ_τὰ_ἄλογα_λόγῳ_χρῆσθαι.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg130.perseus-grc2.xml-Περὶ_τοῦ_τὰ_ἄλογα_λόγῳ_χρῆσθαι_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg024.perseus-grc2.xml-Ἀριστείδης.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg024.perseus-grc2.xml-Ἀριστείδης_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg055.perseus-grc2.xml-Cicero.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg055.perseus-grc2.xml-Cicero_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg080.perseus-grc2.xml-Περὶ_δεισιδαιμονίας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg080.perseus-grc2.xml-Περὶ_δεισιδαιμονίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg080.perseus-grc2.xml-Περὶ_δεισιδαιμονίας_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg017.perseus-grc2.xml-Ἀλκιβιάδου_καὶ_Κοριολὰνου_σύγκρισις.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg017.perseus-grc2.xml-Ἀλκιβιάδου_καὶ_Κοριολὰνου_σύγκρισις_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg120.perseus-grc2.xml-Περὶ_τοῦ_μὴ_δεῖν_δανείζεσθαι.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg120.perseus-grc2.xml-Περὶ_τοῦ_μὴ_δεῖν_δανείζεσθαι.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg120.perseus-grc2.xml-Περὶ_τοῦ_μὴ_δεῖν_δανείζεσθαι_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg098.perseus-grc2.xml-Περὶ_τῆς_εἰς_τὰ_ἔκγονα_φιλοστοργίας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg098.perseus-grc2.xml-Περὶ_τῆς_εἰς_τὰ_ἔκγονα_φιλοστοργίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg098.perseus-grc2.xml-Περὶ_τῆς_εἰς_τὰ_ἔκγονα_φιλοστοργίας_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg123.perseus-grc2.xml-Περὶ_τῆς_Ἡροδότου_κακοηθείας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg123.perseus-grc2.xml-Περὶ_τῆς_Ἡροδότου_κακοηθείας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg123.perseus-grc2.xml-Περὶ_τῆς_Ἡροδότου_κακοηθείας_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg026.perseus-grc2.xml-Ἀριστείδου_καὶ_Κάτωνος_σύγκρισις.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg026.perseus-grc2.xml-Ἀριστείδου_καὶ_Κάτωνος_σύγκρισις_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg132.perseus-grc2.xml-Περὶ_σαρκοφαγίας_λόγος_β′.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg132.perseus-grc2.xml-Περὶ_σαρκοφαγίας_λόγος_β′.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg132.perseus-grc2.xml-Περὶ_σαρκοφαγίας_λόγος_β′_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg015.perseus-grc2.xml-Ἀλκιβιάδης.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg015.perseus-grc2.xml-Ἀλκιβιάδης_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg037.perseus-grc2.xml-Κίμωνος_καὶ_Λουκούλλος_σύγκρισις.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg037.perseus-grc2.xml-Κίμωνος_καὶ_Λουκούλλος_σύγκρισις_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg115.perseus-grc2.xml-Περὶ_τοῦ_ὅτι_μάλιστα_τοῖς_ἡγεμόσι_δεῖ_τὸν_φιλοσοφόν_διαλέγεσθαι.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg115.perseus-grc2.xml-Περὶ_τοῦ_ὅτι_μάλιστα_τοῖς_ἡγεμόσι_δεῖ_τὸν_φιλοσοφόν_διαλέγεσθαι.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg115.perseus-grc2.xml-Περὶ_τοῦ_ὅτι_μάλιστα_τοῖς_ἡγεμόσι_δεῖ_τὸν_φιλοσοφόν_διαλέγεσθαι_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg004.perseus-grc2.xml-Λυκοῦργος.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg004.perseus-grc2.xml-Λυκοῦργος_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg112.perseus-grc2.xml-Συμποσιακῶν_προβλημάτων_βιβλία.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg112.perseus-grc2.xml-Συμποσιακῶν_προβλημάτων_βιβλία_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg072.perseus-grc2.xml-Πῶς_ἄν_τις_ἀπ’_ἐχθρῶν_ὠφελοῖτο.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg072.perseus-grc2.xml-Πῶς_ἄν_τις_ἀπ’_ἐχθρῶν_ὠφελοῖτο.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg072.perseus-grc2.xml-Πῶς_ἄν_τις_ἀπ’_ἐχθρῶν_ὠφελοῖτο_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg005.perseus-grc2.xml-Νομᾶς.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg005.perseus-grc2.xml-Νομᾶς_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg010.perseus-grc2.xml-Θεμιστοκλῆς.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg010.perseus-grc2.xml-Θεμιστοκλῆς_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg053.perseus-grc2.xml-Comparison_of_Agis_and_Cleomenes_and_the_Gracchi.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg053.perseus-grc2.xml-Comparison_of_Agis_and_Cleomenes_and_the_Gracchi_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg054.perseus-grc2.xml-Demosthenes.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg054.perseus-grc2.xml-Demosthenes_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg042.perseus-grc2.xml-Sertorius.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg042.perseus-grc2.xml-Sertorius_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg076.perseus-grc2.xml-Πραμυθητικὸς_πρὸς_Ἀπολλώνιον.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg076.perseus-grc2.xml-Πραμυθητικὸς_πρὸς_Ἀπολλώνιον.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg076.perseus-grc2.xml-Πραμυθητικὸς_πρὸς_Ἀπολλώνιον_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg086.perseus-grc3.xml-Περὶ_τῆς_Ῥωμαίων_τύχης.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg086.perseus-grc3.xml-Περὶ_τῆς_Ῥωμαίων_τύχης.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg086.perseus-grc3.xml-Περὶ_τῆς_Ῥωμαίων_τύχης_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg086.perseus-grc4.xml-Περὶ_τῆς_Ῥωμαίων_τύχης.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg086.perseus-grc4.xml-Περὶ_τῆς_Ῥωμαίων_τύχης.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg086.perseus-grc4.xml-Περὶ_τῆς_Ῥωμαίων_τύχης_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg137.perseus-grc2.xml-Σύνοψις_τοῦ_ὅτι_παραδοξότερα_οἱ_Στωικοὶ_τῶν_ποιητῶν_λέγουσι.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg137.perseus-grc2.xml-Σύνοψις_τοῦ_ὅτι_παραδοξότερα_οἱ_Στωικοὶ_τῶν_ποιητῶν_λέγουσι.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg137.perseus-grc2.xml-Σύνοψις_τοῦ_ὅτι_παραδοξότερα_οἱ_Στωικοὶ_τῶν_ποιητῶν_λέγουσι_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg020.perseus-grc2.xml-Comparison_of_Timoleon_and_Aemilius.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg020.perseus-grc2.xml-Comparison_of_Timoleon_and_Aemilius_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg122.perseus-grc2.xml-Συγκρίσεως_Ἀριστοφάνους_καὶ_Μενάνδρου_ἐπιτομή.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg122.perseus-grc2.xml-Συγκρίσεως_Ἀριστοφάνους_καὶ_Μενάνδρου_ἐπιτομή.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg122.perseus-grc2.xml-Συγκρίσεως_Ἀριστοφάνους_καὶ_Μενάνδρου_ἐπιτομή_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg056.perseus-grc2.xml-Comparison_of_Demosthenes_with_Cicero.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg056.perseus-grc2.xml-Comparison_of_Demosthenes_with_Cicero_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg089.perseus-grc2.xml-Περὶ_Ἴσιδος_και_Ὀσίριδος.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg089.perseus-grc2.xml-Περὶ_Ἴσιδος_και_Ὀσίριδος.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg089.perseus-grc2.xml-Περὶ_Ἴσιδος_και_Ὀσίριδος_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg047.perseus-grc2.xml-Alexander.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg047.perseus-grc2.xml-Alexander_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg021.perseus-grc2.xml-Πελοπίδας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg021.perseus-grc2.xml-Πελοπίδας_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg062.perseus-grc2.xml-Comparison_of_Dion_and_Brutus.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg062.perseus-grc2.xml-Comparison_of_Dion_and_Brutus_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg036.perseus-grc2.xml-Λούκουλλος.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg036.perseus-grc2.xml-Λούκουλλος_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg114.perseus-grc2.xml-Ἐρωτικαὶ_διηγήσεις.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg114.perseus-grc2.xml-Ἐρωτικαὶ_διηγήσεις_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg002.perseus-grc2.xml-Ῥωμύλος.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg002.perseus-grc2.xml-Ῥωμύλος_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg071.perseus-grc2.xml-Πῶς_ἄν_τις_αἴσθοιτο_ἑαυτοῦ_προκόπτοντος_ἐπʼ_ἀρετή.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg071.perseus-grc2.xml-Πῶς_ἄν_τις_αἴσθοιτο_ἑαυτοῦ_προκόπτοντος_ἐπʼ_ἀρετή.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg071.perseus-grc2.xml-Πῶς_ἄν_τις_αἴσθοιτο_ἑαυτοῦ_προκόπτοντος_ἐπʼ_ἀρετή_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg138.perseus-grc2.xml-Περὶ_τῶν_κοινῶν_ἐννοιῶν_πρὸς_τοὺς_Στωικοὺς.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg138.perseus-grc2.xml-Περὶ_τῶν_κοινῶν_ἐννοιῶν_πρὸς_τοὺς_Στωικοὺς.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg138.perseus-grc2.xml-Περὶ_τῶν_κοινῶν_ἐννοιῶν_πρὸς_τοὺς_Στωικοὺς_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg003.perseus-grc2.xml-Θησέως_καὶ_Ῥωμύλου_σύγκρισις.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg003.perseus-grc2.xml-Θησέως_καὶ_Ῥωμύλου_σύγκρισις_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg051.perseus-grc1.xml-Agis_and_Cleomenes.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg051.perseus-grc1.xml-Agis_and_Cleomenes_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg082b.perseus-grc3.xml-Λακαινῶν_ἀποφθάγματα.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg082b.perseus-grc3.xml-Λακαινῶν_ἀποφθάγματα_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg082b.perseus-grc4.xml-Λακαινῶν_ἀποφθάγματα.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg082b.perseus-grc4.xml-Λακαινῶν_ἀποφθάγματα_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg084a.perseus-grc4.xml-Κεφαλαίων_καταγραφή_Ῥωμαϊκά.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg084a.perseus-grc4.xml-Κεφαλαίων_καταγραφή_Ῥωμαϊκά.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg084a.perseus-grc4.xml-Κεφαλαίων_καταγραφή_Ῥωμαϊκά_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg084a.perseus-grc3.xml-Ἀίτια_Ῥωμαϊκά.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg084a.perseus-grc3.xml-Ἀίτια_Ῥωμαϊκά.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg084a.perseus-grc3.xml-Ἀίτια_Ῥωμαϊκά_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg027.perseus-grc2.xml-Philopoemen.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg027.perseus-grc2.xml-Philopoemen_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg090.perseus-grc2.xml-Περὶ_τοῦ_Ε_τοῦ_ἐν_Δελφοῖς.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg090.perseus-grc2.xml-Περὶ_τοῦ_Ε_τοῦ_ἐν_Δελφοῖς.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg090.perseus-grc2.xml-Περὶ_τοῦ_Ε_τοῦ_ἐν_Δελφοῖς_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg014.perseus-grc2.xml-Περικλέους_καὶ_Φαβίου_σύγκρισις.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg014.perseus-grc2.xml-Περικλέους_καὶ_Φαβίου_σύγκρισις_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg028.perseus-grc2.xml-Titus_Flamininus.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg028.perseus-grc2.xml-Titus_Flamininus_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg013.perseus-grc2.xml-Φάβιος_Μάξιμος.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg013.perseus-grc2.xml-Φάβιος_Μάξιμος_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg103.perseus-grc2.xml-Περὶ_φιλοπλουτίας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg103.perseus-grc2.xml-Περὶ_φιλοπλουτίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg103.perseus-grc2.xml-Περὶ_φιλοπλουτίας_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg043.perseus-grc2.xml-Comparison_of_Sertorius_and_Eumenes.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg043.perseus-grc2.xml-Comparison_of_Sertorius_and_Eumenes_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg073.perseus-grc2.xml-Περί_πολυφιλίας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg073.perseus-grc2.xml-Περί_πολυφιλίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg073.perseus-grc2.xml-Περί_πολυφιλίας_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg078.perseus-grc2.xml-Γαμικὰ_παραγγέλματα.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg078.perseus-grc2.xml-Γαμικὰ_παραγγέλματα.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg078.perseus-grc2.xml-Γαμικὰ_παραγγέλματα_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg088.perseus-grc4.xml-Πότερον_Ἀθηναῖοι_κατὰ_πόλεμον_ἢ_κατὰ_σοφίαν_ἐνδοξότεροι.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg088.perseus-grc4.xml-Πότερον_Ἀθηναῖοι_κατὰ_πόλεμον_ἢ_κατὰ_σοφίαν_ἐνδοξότεροι.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg088.perseus-grc4.xml-Πότερον_Ἀθηναῖοι_κατὰ_πόλεμον_ἢ_κατὰ_σοφίαν_ἐνδοξότεροι_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg088.perseus-grc3.xml-Πότερον_Ἀθηναῖοι_κατὰ_πόλεμον_ἢ_κατὰ_σοφίαν_ἐνδοξότεροι.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg088.perseus-grc3.xml-Πότερον_Ἀθηναῖοι_κατὰ_πόλεμον_ἢ_κατὰ_σοφίαν_ἐνδοξότεροι.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg088.perseus-grc3.xml-Πότερον_Ἀθηναῖοι_κατὰ_πόλεμον_ἢ_κατὰ_σοφίαν_ἐνδοξότεροι_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg140.perseus-grc2.xml-Πρὸς_Κωλώτην.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg140.perseus-grc2.xml-Πρὸς_Κωλώτην.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg140.perseus-grc2.xml-Πρὸς_Κωλώτην_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg094.perseus-grc2.xml-Περὶ_τῆς_ἠθικῆς_ἀρετῆς.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg094.perseus-grc2.xml-Περὶ_τῆς_ἠθικῆς_ἀρετῆς.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg094.perseus-grc2.xml-Περὶ_τῆς_ἠθικῆς_ἀρετῆς_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg107.perseus-grc2.xml-Περὶ_τῶν_ὑπὸ_τοῦ_θείου_βραδέως_τιμωρουμένων.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg107.perseus-grc2.xml-Περὶ_τῶν_ὑπὸ_τοῦ_θείου_βραδέως_τιμωρουμένων.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg107.perseus-grc2.xml-Περὶ_τῶν_ὑπὸ_τοῦ_θείου_βραδέως_τιμωρουμένων_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg119.perseus-grc2.xml-Περὶ_μοναρχίας_καὶ_δημοκρατίας_καὶ_ὀλιγαρχίας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg119.perseus-grc2.xml-Περὶ_μοναρχίας_καὶ_δημοκρατίας_καὶ_ὀλιγαρχίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg119.perseus-grc2.xml-Περὶ_μοναρχίας_καὶ_δημοκρατίας_καὶ_ὀλιγαρχίας_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg100.perseus-grc2.xml-Ποτερον_τὰ_τῆς_ψυχῆς_ἢ_τὰ_τοῦ_σώματος_πάθη_χείρονα.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg100.perseus-grc2.xml-Ποτερον_τὰ_τῆς_ψυχῆς_ἢ_τὰ_τοῦ_σώματος_πάθη_χείρονα.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg100.perseus-grc2.xml-Ποτερον_τὰ_τῆς_ψυχῆς_ἢ_τὰ_τοῦ_σώματος_πάθη_χείρονα_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg118.perseus-grc2.xml-Πολιτικὰ_παραγγέλματα.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg118.perseus-grc2.xml-Πολιτικὰ_παραγγέλματα.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg118.perseus-grc2.xml-Πολιτικὰ_παραγγέλματα_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg087.perseus-grc4.xml-Περὶ_τῆς_Ἀλεξάνδρου_τύχης_ἢ_ἀρετῆς_λόγος_Α_λόγος_Β.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg087.perseus-grc4.xml-Περὶ_τῆς_Ἀλεξάνδρου_τύχης_ἢ_ἀρετῆς_λόγος_Α_λόγος_Β_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg087.perseus-grc3.xml-Περὶ_τῆς_Ἀλεξάνδρου_τύχης_ἢ_ἀρετῆς_λόγος_Α_λόγος_Β.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg087.perseus-grc3.xml-Περὶ_τῆς_Ἀλεξάνδρου_τύχης_ἢ_ἀρετῆς_λόγος_Α_λόγος_Β_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg121.perseus-grc2.xml-Vitae_decem_oratorum.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg121.perseus-grc2.xml-Vitae_decem_oratorum_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg065.perseus-grc2.xml-Galba.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg065.perseus-grc2.xml-Galba_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg009.perseus-grc2.xml-Σόλωνος_καὶ_Ποπλικόλα_σύγκρισις.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg009.perseus-grc2.xml-Σόλωνος_καὶ_Ποπλικόλα_σύγκρισις_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg104.perseus-grc2.xml-Περὶ_δυσωπίας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg104.perseus-grc2.xml-Περὶ_δυσωπίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg104.perseus-grc2.xml-Περὶ_δυσωπίας_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg066.perseus-grc2.xml-Otho.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg066.perseus-grc2.xml-Otho_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg025.perseus-grc2.xml-Μάρκος_Κάτων.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg025.perseus-grc2.xml-Μάρκος_Κάτων_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg129.perseus-grc2.xml-Πότερα_τῶν_ζῴων_φρονιμώτερα_τὰ_χερσαῖα_ἢ_τὰ_ἔνυδρα.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg129.perseus-grc2.xml-Πότερα_τῶν_ζῴων_φρονιμώτερα_τὰ_χερσαῖα_ἢ_τὰ_ἔνυδρα.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg129.perseus-grc2.xml-Πότερα_τῶν_ζῴων_φρονιμώτερα_τὰ_χερσαῖα_ἢ_τὰ_ἔνυδρα_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg029.perseus-grc2.xml-Comparison_of_Philopoemen_and_Titus.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg029.perseus-grc2.xml-Comparison_of_Philopoemen_and_Titus_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg068.perseus-grc2.xml-Πῶς_δεῖ_τὸν_νέον_ποιημάτων_ἀκούειν.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg068.perseus-grc2.xml-Πῶς_δεῖ_τὸν_νέον_ποιημάτων_ἀκούειν.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg068.perseus-grc2.xml-Πῶς_δεῖ_τὸν_νέον_ποιημάτων_ἀκούειν_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg099.perseus-grc2.xml-Εἰ_αὐτάρκης_ἡ_κακία_πρὸς_κακοδαιμονίαν.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg099.perseus-grc2.xml-Εἰ_αὐτάρκης_ἡ_κακία_πρὸς_κακοδαιμονίαν.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg099.perseus-grc2.xml-Εἰ_αὐτάρκης_ἡ_κακία_πρὸς_κακοδαιμονίαν_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg070.perseus-grc2.xml-Πῶς_ἄν_τις_διακρίνειε_τὸν_κόλκακα_τοῦ_φίλου.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg070.perseus-grc2.xml-Πῶς_ἄν_τις_διακρίνειε_τὸν_κόλκακα_τοῦ_φίλου.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg070.perseus-grc2.xml-Πῶς_ἄν_τις_διακρίνειε_τὸν_κόλκακα_τοῦ_φίλου_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg139.perseus-grc2.xml-Ὅτι_οὐδ_ἡδέως_ζῆν_ἔστι_κατ_Ἐπίκουρον.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg139.perseus-grc2.xml-Ὅτι_οὐδ_ἡδέως_ζῆν_ἔστι_κατ_Ἐπίκουρον.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg139.perseus-grc2.xml-Ὅτι_οὐδ_ἡδέως_ζῆν_ἔστι_κατ_Ἐπίκουρον_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg023.perseus-grc2.xml-Πελοπίδου_καὶ_Μαρκέλλου_σύγκρισις.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg023.perseus-grc2.xml-Πελοπίδου_καὶ_Μαρκέλλου_σύγκρισις_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg097.perseus-grc2.xml-Περὶ_φιλαδελφίας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg097.perseus-grc2.xml-Περὶ_φιλαδελφίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg097.perseus-grc2.xml-Περὶ_φιλαδελφίας_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg012.perseus-grc2.xml-Περικλῆς.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg012.perseus-grc2.xml-Περικλῆς_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg050.perseus-grc2.xml-Cato_the_Younger.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg050.perseus-grc2.xml-Cato_the_Younger_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg006.perseus-grc2.xml-Λυκούργου_καὶ_Νομᾶ_σύγκρισις.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg006.perseus-grc2.xml-Λυκούργου_καὶ_Νομᾶ_σύγκρισις_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg127.perseus-grc3.xml-Περὶ_τοῦ_πρώτως_ψυχροῦ.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg127.perseus-grc3.xml-Περὶ_τοῦ_πρώτως_ψυχροῦ.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg127.perseus-grc3.xml-Περὶ_τοῦ_πρώτως_ψυχροῦ_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg040.perseus-grc2.xml-Νικίου_καὶ_Κράσσου_σύγκρισις.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg040.perseus-grc2.xml-Νικίου_καὶ_Κράσσου_σύγκρισις_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg133.perseus-grc2.xml-Πλατωνικὰ_ζητήματα.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg133.perseus-grc2.xml-Πλατωνικὰ_ζητήματα_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg058.perseus-grc2.xml-Antony.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg058.perseus-grc2.xml-Antony_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg059.perseus-grc2.xml-Comparison_of_Demetrius_and_Antony.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg059.perseus-grc2.xml-Comparison_of_Demetrius_and_Antony_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg032.perseus-grc2.xml-Λύσανδρος.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg032.perseus-grc2.xml-Λύσανδρος_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg095.perseus-grc2.xml-Περὶ_ἀοπγησίας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg095.perseus-grc2.xml-Περὶ_ἀοπγησίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg095.perseus-grc2.xml-Περὶ_ἀοπγησίας_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg101.perseus-grc2.xml-Περὶ_ἀδολεσχίας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg101.perseus-grc2.xml-Περὶ_ἀδολεσχίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg101.perseus-grc2.xml-Περὶ_ἀδολεσχίας_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg034.perseus-grc2.xml-Σύγκρισις_Λυσάνδρου_καὶ_Σύλλα.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg034.perseus-grc2.xml-Σύγκρισις_Λυσάνδρου_καὶ_Σύλλα_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg007.perseus-grc2.xml-Σόλων.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg007.perseus-grc2.xml-Σόλων_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg008.perseus-grc2.xml-Ποπλικόλας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg008.perseus-grc2.xml-Ποπλικόλας_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg091.perseus-grc2.xml-Περὶ_τοῦ_μὴ_χρᾶν_ἔμμετρα_νῦν_τὴν_Πυθίαν.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg091.perseus-grc2.xml-Περὶ_τοῦ_μὴ_χρᾶν_ἔμμετρα_νῦν_τὴν_Πυθίαν.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg091.perseus-grc2.xml-Περὶ_τοῦ_μὴ_χρᾶν_ἔμμετρα_νῦν_τὴν_Πυθίαν_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg092.perseus-grc2.xml-Περὶ_τῶν_ἐκλελοιπότων.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg092.perseus-grc2.xml-Περὶ_τῶν_ἐκλελοιπότων.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg092.perseus-grc2.xml-Περὶ_τῶν_ἐκλελοιπότων_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg128.perseus-grc2.xml-Περὶ_τοῦ_πότερον_ὕδωρ_ἢ_πῦρ_χρησιμώτερον.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg128.perseus-grc2.xml-Περὶ_τοῦ_πότερον_ὕδωρ_ἢ_πῦρ_χρησιμώτερον.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg128.perseus-grc2.xml-Περὶ_τοῦ_πότερον_ὕδωρ_ἢ_πῦρ_χρησιμώτερον_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg093.perseus-grc2.xml-Εἰ_διδακτὸν_ἡ_ἀρετή.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg093.perseus-grc2.xml-Εἰ_διδακτὸν_ἡ_ἀρετή.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg093.perseus-grc2.xml-Εἰ_διδακτὸν_ἡ_ἀρετή_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg110.perseus-grc2.xml-Περὶ_φυγῆς.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg110.perseus-grc2.xml-Περὶ_φυγῆς.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg110.perseus-grc2.xml-Περὶ_φυγῆς_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg001.perseus-grc2.xml-Θησεύς.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg001.perseus-grc2.xml-Θησεύς_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg067.perseus-grc2.xml-Περὶ_παίδων_ἀγωγῆς.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg067.perseus-grc2.xml-Περὶ_παίδων_ἀγωγῆς.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg067.perseus-grc2.xml-Περὶ_παίδων_ἀγωγῆς_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg033.perseus-grc2.xml-Σύλλας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg033.perseus-grc2.xml-Σύλλας_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg105.perseus-grc2.xml-Περὶ_φθόνου_καὶ_μίσους.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg105.perseus-grc2.xml-Περὶ_φθόνου_καὶ_μίσους.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg105.perseus-grc2.xml-Περὶ_φθόνου_καὶ_μίσους_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg035.perseus-grc2.xml-Κίμων.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg035.perseus-grc2.xml-Κίμων_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg057.perseus-grc2.xml-Demetrius.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg057.perseus-grc2.xml-Demetrius_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg108.perseus-grc2.xml-Περὶ_εἱμαρμένης.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg108.perseus-grc2.xml-Περὶ_εἱμαρμένης.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg108.perseus-grc2.xml-Περὶ_εἱμαρμένης_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg113.perseus-grc2.xml-Ἐρωτικός.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg113.perseus-grc2.xml-Ἐρωτικός.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg113.perseus-grc2.xml-Ἐρωτικός_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg079.perseus-grc2.xml-Των_επτά_σοφών_συμπόσιον.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg079.perseus-grc2.xml-Των_επτά_σοφών_συμπόσιον.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg079.perseus-grc2.xml-Των_επτά_σοφών_συμπόσιον_human_readable.txt
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg018.perseus-grc2.xml-Timoleon.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg018.perseus-grc2.xml-Timoleon_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg074.perseus-grc2.xml-Περὶ_τύχης.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg074.perseus-grc2.xml-Περὶ_τύχης.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg074.perseus-grc2.xml-Περὶ_τύχης_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg135.perseus-grc2.xml-Ἐπιτομὴ_τοῦ_περὶ_τῆς_ἐν_τῷ_Τιμαίῳ_ψυχογονίας.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg135.perseus-grc2.xml-Ἐπιτομὴ_τοῦ_περὶ_τῆς_ἐν_τῷ_Τιμαίῳ_ψυχογονίας.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg135.perseus-grc2.xml-Ἐπιτομὴ_τοῦ_περὶ_τῆς_ἐν_τῷ_Τιμαίῳ_ψυχογονίας_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg084b.perseus-grc3.xml-Αἴτια_Ἑλληνικά.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg084b.perseus-grc3.xml-Αἴτια_Ἑλληνικά.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg084b.perseus-grc3.xml-Αἴτια_Ἑλληνικά_human_readable.txt
+⚠ No chapters found in /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg084b.perseus-grc4.xml-Κεφαλαίων_καταγραφή_Ἑλληνικά.xml; processing entire text as one unit.
+✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg084b.perseus-grc4.xml-Κεφαλαίων_καταγραφή_Ἑλληνικά.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg084b.perseus-grc4.xml-Κεφαλαίων_καταγραφή_Ἑλληνικά_human_readable.txt
+#+end_example
 
+
+    input_file = "/home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg001.perseus-grc2.xml-Θησεύς.xml"
+
+   
+*** Trying again, human readable 
+#+begin_src python :results output
+import xml.etree.ElementTree as ET
+import os
+import argparse
+
+def extract_text_from_tei(xml_file_path):
+    """
+    Extracts the main Ancient Greek text from a TEI-formatted XML file.
+    
+    This function navigates the XML structure to capture chapters, sections, and paragraphs,
+    while ignoring supplementary notes and bibliographical details. It is designed to handle
+    common structural variations in TEI files.
+    
+    Args:
+        xml_file_path (str): Path to the TEI XML file.
+        
+    Returns:
+        str: A string containing the extracted text with chapter and section titles.
+    """
+    
+    # Parse the XML file
+    tree = ET.parse(xml_file_path)
+    root = tree.getroot()
+    greek_text = []
+    
+    # Locate the main text body. In TEI, the primary text is often within <text><body>.
+    body = root.find('.//text/body')
+    if body is None:
+        # Fallback to processing the entire document if no <body> is found.
+        body = root
+
+    # Define tags that contain supplementary content to be ignored.
+    ignore_tags = {'note', 'bibl', 'listBibl', 'back'}
+    
+    def should_ignore(element):
+        """
+        Determines whether an element should be skipped based on its tag.
+        
+        Args:
+            element (xml.etree.ElementTree.Element): The XML element to check.
+            
+        Returns:
+            bool: True if the element should be ignored, False otherwise.
+        """
+        return element.tag in ignore_tags
+
+    # Try to find chapters using the TEI <chapter> element.
+    chapters = body.findall('.//chapter')
+    if not chapters:
+        # Fallback: in many TEI files, chapters are marked as <div type="chapter">
+        chapters = [div for div in body.findall('.//div') if div.attrib.get('type', '').lower() == 'chapter']
+    
+    if chapters:
+        # Process each chapter found
+        for chapter in chapters:
+            # Extract the chapter title from either <title> or <head>
+            title_elem = chapter.find('title') or chapter.find('head')
+            chapter_title = title_elem.text.strip() if title_elem is not None and title_elem.text else 'Untitled Chapter'
+            greek_text.append(f"Chapter: {chapter_title}")
+
+            # Look for sections within the chapter.
+            sections = chapter.findall('.//section')
+            if not sections:
+                # Fallback: sections may be marked as <div type="section">
+                sections = [div for div in chapter.findall('.//div') if div.attrib.get('type', '').lower() == 'section']
+            if sections:
+                for section in sections:
+                    # Extract the section title if available.
+                    sec_title_elem = section.find('title') or section.find('head')
+                    section_title = sec_title_elem.text.strip() if sec_title_elem is not None and sec_title_elem.text else 'Untitled Section'
+                    greek_text.append(f"Section: {section_title}")
+                    
+                    # Extract paragraphs from the section.
+                    for para in section.findall('.//p'):
+                        if not should_ignore(para) and para.text:
+                            greek_text.append(para.text.strip())
+            else:
+                # If no sections, extract paragraphs directly from the chapter.
+                for para in chapter.findall('.//p'):
+                    if not should_ignore(para) and para.text:
+                        greek_text.append(para.text.strip())
+    else:
+        # If no chapters are found, fallback to extracting all paragraphs from the body.
+        for para in body.findall('.//p'):
+            if not should_ignore(para) and para.text:
+                greek_text.append(para.text.strip())
+    
+    return '\n'.join(greek_text)
+
+def process_directory(input_dir, output_dir):
+    """
+    Processes all TEI XML files in the input directory, extracts the Ancient Greek text,
+    and writes the results to corresponding text files in the output directory.
+    
+    Args:
+        input_dir (str): Path to the directory containing TEI XML files.
+        output_dir (str): Path to the directory where output text files will be saved.
+    """
+    # Create the output directory if it doesn't exist.
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    # Iterate over each file in the input directory.
+    for filename in os.listdir(input_dir):
+        if filename.lower().endswith('.xml'):
+            input_file_path = os.path.join(input_dir, filename)
+            try:
+                extracted_text = extract_text_from_tei(input_file_path)
+            except Exception as e:
+                print(f"Error processing file {input_file_path}: {e}")
+                continue
+            
+            # Generate the output file name by replacing the .xml extension with .txt.
+            output_filename = os.path.splitext(filename)[0] + '.txt'
+            output_file_path = os.path.join(output_dir, output_filename)
+            
+            # Write the extracted text to the output file.
+            with open(output_file_path, 'w', encoding='utf-8') as f:
+                f.write(extracted_text)
+            print(f"Processed {filename} -> {output_filename}")
+
+if __name__ == '__main__':
+    # Set up argument parsing to accept input and output directory paths.
+    parser = argparse.ArgumentParser(description="Extract Ancient Greek text from TEI XML files in a directory")
+    parser.add_argument("input_dir", help="Path to the input directory containing TEI XML files")
+    parser.add_argument("output_dir", help="Path to the output directory to save extracted text files")
+    args = parser.parse_args()
+    
+    process_directory(args.input_dir, args.output_dir)
+#+end_src
 
 * Extracting names from books
 
