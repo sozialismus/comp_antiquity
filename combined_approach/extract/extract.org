@@ -1508,9 +1508,6 @@ process_folder(input_folder, human_output_dir)
 ✅ Processed /home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg084b.perseus-grc4.xml-Κεφαλαίων_καταγραφή_Ἑλληνικά.xml → Saved to /home/gnosis/Documents/au_work/main/results/plutarch/human/tlg0007.tlg084b.perseus-grc4.xml-Κεφαλαίων_καταγραφή_Ἑλληνικά_human_readable.txt
 #+end_example
 
-
-    input_file = "/home/gnosis/Documents/au_work/main/corpora/Plutarch/raw_xml/tlg0007.tlg001.perseus-grc2.xml-Θησεύς.xml"
-
    
 *** Trying again, human readable 
 #+begin_src python :results output
