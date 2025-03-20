@@ -11,7 +11,7 @@ def clean_text(text: str) -> str:
     text = re.sub(r"[A-Za-z]", "", text)
     
     # Define allowed punctuation
-    allowed_punct = {',', '.', ';', '·'}
+    allowed_punct = {',', '.', ';', '·', '"'}
     # Create a translation table that maps unwanted punctuation to None
     all_punct = set(string.punctuation)
     disallowed_punct = ''.join(ch for ch in all_punct if ch not in allowed_punct)
