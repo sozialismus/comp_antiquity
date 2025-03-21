@@ -91,59 +91,62 @@ def clean_text(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
-def process_files(src: str, dest: str, index_file: str):
+def process_files(src_dir: str, dest_dir: str, index_csv: str):
     """
-    Processes all .txt files in the source directory, cleans their content, 
-    and saves them in the destination directory while preserving folder structure.
+    Processes files in src_dir, cleans them, and saves to dest_dir with updated identifiers.
 
     Parameters:
-    src (str): The source directory containing .txt files.
-    dest (str): The destination directory to save cleaned files.
-    index_file (str): Path to the index.csv file from the source directory.
+    - src_dir (str): Source directory containing parsed files organized by subfolders.
+    - dest_dir (str): Destination directory for cleaned files.
+    - index_csv (str): Path to the CSV file where index information is saved.
     """
 
-    # Ensure the destination directory exists
-    Path(dest).mkdir(parents=True, exist_ok=True)
-    
-    # Prepare a new index list to mimic the structure of index.csv
-    new_index_data = []
+    # Prepare the index data
+    index_data = []
 
-    # Iterate through all subdirectories and files
-    for root, _, files in os.walk(src):
+    # Walk through the source directory
+    for root, _, files in os.walk(src_dir):
         for file in files:
-            if file.endswith(".txt"):
-                # Full source path
-                src_file_path = os.path.join(root, file)
+            if file.endswith(".txt"):  # Process only .txt files
+                # Define source and destination paths
+                src_file_path = Path(root) / file
+                rel_path = src_file_path.relative_to(src_dir)
+                dest_subfolder = Path(dest_dir) / rel_path.parent
+                dest_file_path = dest_subfolder / file
 
-                # Mimic subdirectory structure in destination
-                sub_dir = root.replace(src, "").lstrip(os.sep)
-                dest_dir_path = os.path.join(dest, sub_dir)
-                Path(dest_dir_path).mkdir(parents=True, exist_ok=True)
+                # Extract corpus name from the relative path (e.g., "parsed_data/perseus")
+                corpus_name = rel_path.parts[0]  # This assumes the first subfolder is the corpus
+                document_id = f"{corpus_name}.{file.replace('.txt', '')}"  # Updated document_id
+                source_id = file.replace(".txt", "")  # Source ID (file name without extension)
 
-                # Destination file path
-                dest_file_path = os.path.join(dest_dir_path, file)
+                # Ensure the destination directory exists
+                dest_subfolder.mkdir(parents=True, exist_ok=True)
 
-                # Read and clean the file content
-                with open(src_file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    cleaned_content = clean_text(content)
+                # Read, clean, and save the file
+                try:
+                    with open(src_file_path, "r", encoding="utf-8") as f:
+                        content = f.read()
 
-                # Write the cleaned content to the destination file
-                with open(dest_file_path, "w", encoding="utf-8") as f:
-                    f.write(cleaned_content)
+                    cleaned_content = clean_text(content)  # Call your cleaning function here
 
-                # Update the new index
-                new_index_data.append({
-                    "document_id": Path(src_file_path).stem,  # Use filename without extension
-                    "src_path": src_file_path,
-                    "dest_path": dest_file_path
-                })
+                    with open(dest_file_path, "w", encoding="utf-8") as f:
+                        f.write(cleaned_content)
 
-    # Save the new index.csv file
-    new_index_path = os.path.join(dest, "index.csv")
-    new_index_df = pd.DataFrame(new_index_data)
-    new_index_df.to_csv(new_index_path, index=False)
-    print(f"Saved index.csv to {new_index_path}")
+                    # Append metadata to the index
+                    index_data.append({
+                        "document_id": document_id,
+                        "source_id": source_id,
+                        "src_path": str(src_file_path),
+                        "dest_path": str(dest_file_path)
+                    })
+
+                except Exception as e:
+                    print(f"Error processing file: {src_file_path}, Error: {e}")
+
+    # Save index.csv
+    index_df = pd.DataFrame(index_data)
+    index_df.to_csv(index_csv, index=False)
+    print(f"Index saved to {index_csv}")
 
 if __name__ == "__main__":
     # Define source and destination directories
