@@ -91,71 +91,79 @@ def clean_text(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
-def process_files(src_dir: str, dest_dir: str, index_csv: str):
+def process_files(src_dir: str, dest_dir: str):
     """
-    Processes files in src_dir, cleans them, and saves to dest_dir with updated identifiers.
+    Processes files listed in the existing index.csv file in src_dir by cleaning them and saving them
+    to dest_dir while maintaining the original metadata structure.
 
     Parameters:
-    - src_dir (str): Source directory containing parsed files organized by subfolders.
-    - dest_dir (str): Destination directory for cleaned files.
-    - index_csv (str): Path to the CSV file where index information is saved.
+    - src_dir (str): The source directory containing the parsed files and the existing index.csv.
+    - dest_dir (str): The destination directory where cleaned files and a new index.csv will be saved.
     """
+    # Path to the existing index.csv file
+    index_csv_path = Path(src_dir) / "index.csv"
 
-    # Prepare the index data
-    index_data = []
+    # Ensure the index.csv file exists in the source directory
+    if not index_csv_path.exists():
+        raise FileNotFoundError(f"index.csv file not found in {src_dir}")
 
-    # Walk through the source directory
-    for root, _, files in os.walk(src_dir):
-        for file in files:
-            if file.endswith(".txt"):  # Process only .txt files
-                # Define source and destination paths
-                src_file_path = Path(root) / file
-                rel_path = src_file_path.relative_to(src_dir)
-                dest_subfolder = Path(dest_dir) / rel_path.parent
-                dest_file_path = dest_subfolder / file
+    # Read the existing index.csv
+    index_df = pd.read_csv(index_csv_path)
 
-                # Extract corpus name from the relative path (e.g., "parsed_data/perseus")
-                corpus_name = rel_path.parts[0]  # This assumes the first subfolder is the corpus
-                document_id = f"{corpus_name}.{file.replace('.txt', '')}"  # Updated document_id
-                source_id = file.replace(".txt", "")  # Source ID (file name without extension)
+    # Prepare index data for the new cleaned files
+    cleaned_index_data = []
 
-                # Ensure the destination directory exists
-                dest_subfolder.mkdir(parents=True, exist_ok=True)
+    # Process each row in the index.csv
+    for _, row in index_df.iterrows():
+        try:
+            # Extract metadata
+            src_path = Path(row["dest_path"])  # The existing `dest_path` is the source for cleaning
+            source_name = row["source_name"]
+            source_id = row["source_id"]
+            document_id = row["document_id"]
 
-                # Read, clean, and save the file
-                try:
-                    with open(src_file_path, "r", encoding="utf-8") as f:
-                        content = f.read()
+            # Construct the new destination path in the cleaned folder
+            rel_path = src_path.relative_to(src_dir)  # Preserve original structure
+            dest_file_path = Path(dest_dir) / rel_path
 
-                    cleaned_content = clean_text(content)  # Call your cleaning function here
+            # Create destination subfolders as necessary
+            dest_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-                    with open(dest_file_path, "w", encoding="utf-8") as f:
-                        f.write(cleaned_content)
+            # Read, clean, and save the file
+            with open(src_path, "r", encoding="utf-8") as f:
+                content = f.read()
 
-                    # Append metadata to the index
-                    index_data.append({
-                        "document_id": document_id,
-                        "source_id": source_id,
-                        "src_path": str(src_file_path),
-                        "dest_path": str(dest_file_path)
-                    })
+            # Clean the text content
+            cleaned_content = clean_text(content)
 
-                except Exception as e:
-                    print(f"Error processing file: {src_file_path}, Error: {e}")
+            # Save the cleaned content to the designated destination path
+            with open(dest_file_path, "w", encoding="utf-8") as f:
+                f.write(cleaned_content)
 
-    # Save index.csv
-    index_df = pd.DataFrame(index_data)
-    index_df.to_csv(index_csv, index=False)
-    print(f"Index saved to {index_csv}")
+            # Add metadata entry for the new index
+            cleaned_index_data.append({
+                "src_path": str(src_path),
+                "dest_path": str(dest_file_path),
+                "source_name": source_name,
+                "source_id": source_id,
+                "document_id": document_id
+            })
+
+        except Exception as e:
+            print(f"Error processing file {src_path}: {e}")
+
+    # Save the new metadata to the index.csv in the destination directory
+    cleaned_index_csv_path = Path(dest_dir) / "index.csv"
+    cleaned_index_df = pd.DataFrame(cleaned_index_data)
+    cleaned_index_df.to_csv(cleaned_index_csv_path, index=False, encoding="utf-8")
+    print(f"New index metadata saved to {cleaned_index_csv_path}")
+
 
 if __name__ == "__main__":
     # Define source and destination directories
     SRC_DIR = "dat/greek/parsed_data"
     DEST_DIR = "dat/greek/cleaned_parsed_data"
-    
-    # Path to the existing index.csv file
-    INDEX_FILE = os.path.join(SRC_DIR, "index.csv")
 
     print("Starting text cleaning process...")
-    process_files(SRC_DIR, DEST_DIR, INDEX_FILE)
+    process_files(SRC_DIR, DEST_DIR)
     print("Text cleaning process complete.")
