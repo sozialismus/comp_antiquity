@@ -56,23 +56,25 @@ def get_author(tree: etree.ElementTree) -> str:
 
 def get_text(tree: etree.ElementTree) -> str:
     """Extracts the contents of all text elements from the tree except for
-    notes.
+    notes, bibl, and foreign nodes.
     """
-    # matches all elements, that are descendants of the "text" element
-    # but are not note elements or descendants of a note element
-    # in short it basically just ignores notes, cause we don't want
-    # to have them in the output
+    # Matches all elements that are descendants of the "text" element
+    # but are not note, bibl, or foreign elements or their descendants.
     texts = tree.xpath(
-        """//
-            *[local-name() = 'text']//
-            *[not(local-name() = 'note') and
-              not(ancestor::*[local-name() = 'note'
-            ])
-        ]/text()"""
+        """//*
+       beyer    [local-name() = 'text']//
+           *[not(local-name() = 'note') and
+             not(local-name() = 'bibl') and
+             not(local-name() = 'foreign') and
+             not(ancestor::*[
+                 local-name() = 'note' or
+                 local-name() = 'bibl' or
+                 local-name() = 'foreign'
+             ])
+           ]/text()"""
     )
     texts = [text.strip() for text in texts if text]
-    text = "\n".join(texts)  # join_lines(texts)
-    # text = remove_double_linebreaks(text)
+    text = "\n".join(texts)
     return text
 
 

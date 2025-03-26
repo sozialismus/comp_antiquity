@@ -5,7 +5,9 @@ from pathlib import Path
 from utils.text import remove_digits, remove_xml_refs  # Assuming these are available
 
 # Define unwanted characters/symbols
-UNWANTED_CHARS = r"[0-9a-zA-Z!#€%&/()?\[\]^_`{|}~¶]"
+# UNWANTED_CHARS = r"[0-9a-zA-Z!#€%&/()?\[\]^_`{|}~¶\-\"'“”‘’«»„‚‹›]"
+UNWANTED_CHARS = r"[0-9a-zA-Z!#€%&/()?\[\]^_`{|}~¶\-\"'“”‘’«»‹›„‚‟‛「」『』〝〞〟ՙ״؍〃༺༻]"
+
 
 # Greek punctuation
 GREEK_PUNCTUATION = {",", ".", ";", "·", "„", "“", "…"}
