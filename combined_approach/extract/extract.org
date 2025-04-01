@@ -904,7 +904,7 @@ print("🎉 Extraction complete!")
   brenton_usfx_file = "/home/gnosis/Documents/au_work/main/corpora/opensource/brent_sep/grcbrent_usfx/grcbrent_usfx.xml"
 
   # Define main output directory
-  main_output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/nlp/continuous"
+  main_output_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/nlp/joined"
 
   # Ensure subdirectories exist
   os.makedirs(main_output_dir, exist_ok=True)
@@ -935,7 +935,7 @@ print("🎉 Extraction complete!")
           verse_text = [element.text.strip() for element in paragraph if element.tag in ["w", "prefix", "suffix"] and element.text]
           full_text += " " + clean_text(" ".join(verse_text))
       
-      output_file = os.path.join(output_dir, os.path.basename(file_path).replace(".xml", "_nlp_ready.txt"))
+      output_file = os.path.join(output_dir, os.path.basename(file_path).replace(".xml", "-joined.txt"))
       with open(output_file, "w", encoding="utf-8") as f:
           f.write(full_text.strip())
       print(f"✅ SBLGNT saved: {output_file}")
@@ -958,7 +958,7 @@ print("🎉 Extraction complete!")
               
               full_text += " " + clean_text(" ".join(paragraph_text)).replace("\n", " ")
           
-          output_file = os.path.join(output_dir, f"{book_code}_nlp_ready.txt")
+          output_file = os.path.join(output_dir, f"{book_code}-joined-Brenton.txt")
           with open(output_file, "w", encoding="utf-8") as f:
               f.write(full_text.strip())
           print(f"✅ Brenton saved: {output_file}")
@@ -974,8 +974,6 @@ print("🎉 Extraction complete!")
   print("🎉 Extraction complete!")
 #+end_src
 
-#+RESULTS:
-: None
 
 ** Brenton & SBLGNT - sentences as per grc_proiel_trf parser
 #+begin_src python
@@ -2015,11 +2013,11 @@ root_dir = "/home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct"  #
 # Iterate through all subdirectories and files
 for dirpath, _, filenames in os.walk(root_dir):
     for file_name in filenames:
-        # Extract the file prefix before the first "_"
+        # Extract the file prefix before the first "-"
         base_name, ext = os.path.splitext(file_name)
 
-        # Split at "_" to check for a known book abbreviation
-        parts = base_name.split("_", 1)
+        # Split at "-" to check for a known book abbreviation
+        parts = base_name.split("-", 1)
         if len(parts) < 2:
             continue  # Skip files that don't match the pattern
         
@@ -2038,35 +2036,466 @@ for dirpath, _, filenames in os.walk(root_dir):
 print("\n✅ Renaming complete across all subdirectories!")
 #+end_src
 
+
+
+* New task - extract 6 books
+
+** ASV - https://github.com/openbibleinfo/American-Standard-Version-Bible/tree/master
+#+begin_src python :results output
+import os
+import re
+import html
+from lxml import etree
+
+# Function to clean and decode text (for English)
+def clean_text(text):
+    if text:
+        text = html.unescape(text)  # Decode HTML entities like &#8217;
+        text = re.sub(r"\s+", " ", text)  # Normalize whitespace
+        return text.strip()
+    return ""
+
+# Recursive function to extract text excluding <note> elements but preserving tail text.
+def get_text_excluding_notes(elem):
+    parts = []
+    if elem.text:
+        parts.append(elem.text)
+    for child in elem:
+        if child.tag.lower() != "note":
+            parts.append(get_text_excluding_notes(child))
+        if child.tail:
+            parts.append(child.tail)
+    return "".join(parts)
+
+# Function to extract text from a USX file as a single continuous string
+def extract_text_from_usx(file_path):
+    tree = etree.parse(file_path)
+    root = tree.getroot()
+    
+    # Get the book identifier from the <book> element
+    book_elem = root.find(".//book")
+    if book_elem is not None:
+        book_name = book_elem.get("code") or book_elem.get("id") or "UNKNOWN_BOOK"
+    else:
+        book_name = "UNKNOWN_BOOK"
+    
+    text_parts = []
+    # Process all <para> elements
+    for para in root.findall(".//para"):
+        para_text = get_text_excluding_notes(para)
+        para_text = clean_text(para_text)
+        if para_text:
+            text_parts.append(para_text)
+    
+    # Join all parts with a single space to form one continuous string
+    full_text = " ".join(text_parts)
+    return book_name, full_text
+
+# Define the directory containing your USX files and output directory
+usx_dir = "/home/gnosis/Documents/au_work/main/corpora/ASV/raw/"
+output_dir = "/home/gnosis/Documents/au_work/main/corpora/ASV/extracted/"
+os.makedirs(output_dir, exist_ok=True)
+
+# Process all files ending with .usx
+usx_files = [f for f in os.listdir(usx_dir) if f.endswith(".usx")]
+extracted_previews = {}
+
+for filename in usx_files:
+    file_path = os.path.join(usx_dir, filename)
+    book_name, extracted_text = extract_text_from_usx(file_path)
+    
+    # Save the full extracted text into an output file
+    output_file = os.path.join(output_dir, f"{book_name}-joined.txt")
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(extracted_text)
+    print(f"✅ Extracted {book_name}: {output_file}")
+    
+    # Store the first 1000 characters for preview
+    extracted_previews[book_name] = extracted_text[:1000]
+
+# Print the first 1000 characters for each extracted book
+for book, preview in extracted_previews.items():
+    print(f"\n--- First 1000 characters of {book} ---\n")
+    print(preview)
+#+end_src
+
 #+RESULTS:
 #+begin_example
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 1Cor_nlp_ready.txt -> ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Α_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 1John_nlp_ready.txt -> ΙΩΑΝΝΟΥ Α_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 1Pet_nlp_ready.txt -> ΠΕΤΡΟΥ Α_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 1Thess_nlp_ready.txt -> ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Α_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 1Tim_nlp_ready.txt -> ΠΡΟΣ ΤΙΜΟΘΕΟΝ Α_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 2Cor_nlp_ready.txt -> ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Β_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 2John_nlp_ready.txt -> ΙΩΑΝΝΟΥ Β_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 2Pet_nlp_ready.txt -> ΠΕΤΡΟΥ Β_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 2Thess_nlp_ready.txt -> ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Β_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 2Tim_nlp_ready.txt -> ΠΡΟΣ ΤΙΜΟΘΕΟΝ Β_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: 3John_nlp_ready.txt -> ΙΩΑΝΝΟΥ Γ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Acts_nlp_ready.txt -> ΠΡΑΞΕΙΣ ΑΠΟΣΤΟΛΩΝ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Col_nlp_ready.txt -> ΠΡΟΣ ΚΟΛΟΣΣΑΕΙΣ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Eph_nlp_ready.txt -> ΠΡΟΣ ΕΦΕΣΙΟΥΣ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Gal_nlp_ready.txt -> ΠΡΟΣ ΓΑΛΑΤΑΣ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Heb_nlp_ready.txt -> ΠΡΟΣ ΕΒΡΑΙΟΥΣ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Jas_nlp_ready.txt -> ΙΑΚΩΒΟΥ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: John_nlp_ready.txt -> ΚΑΤΑ ΙΩΑΝΝΗΝ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Jude_nlp_ready.txt -> ΙΟΥΔΑ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Luke_nlp_ready.txt -> ΚΑΤΑ ΛΟΥΚΑΝ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Mark_nlp_ready.txt -> ΚΑΤΑ ΜΑΡΚΟΝ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Matt_nlp_ready.txt -> ΚΑΤΑ ΜΑΘΘΑΙΟΝ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Phil_nlp_ready.txt -> ΠΡΟΣ ΦΙΛΙΠΠΗΣΙΟΥΣ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Phlm_nlp_ready.txt -> ΠΡΟΣ ΦΙΛΗΜΟΝΑ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Rev_nlp_ready.txt -> ΑΠΟΚΑΛΥΨΙΣ ΙΩΑΝΝΟΥ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Rom_nlp_ready.txt -> ΠΡΟΣ ΡΩΜΑΙΟΥΣ_nlp_ready.txt
-Renamed in /home/gnosis/Documents/au_work/main/corpora/extract/SBLGNT_punct: Titus_nlp_ready.txt -> ΠΡΟΣ ΤΙΤΟΝ_nlp_ready.txt
+✅ Extracted RUT: /home/gnosis/Documents/au_work/main/corpora/ASV/extracted/RUT-joined.txt
+✅ Extracted EST: /home/gnosis/Documents/au_work/main/corpora/ASV/extracted/EST-joined.txt
+✅ Extracted JON: /home/gnosis/Documents/au_work/main/corpora/ASV/extracted/JON-joined.txt
+✅ Extracted JUD: /home/gnosis/Documents/au_work/main/corpora/ASV/extracted/JUD-joined.txt
+✅ Extracted DAN: /home/gnosis/Documents/au_work/main/corpora/ASV/extracted/DAN-joined.txt
+✅ Extracted MRK: /home/gnosis/Documents/au_work/main/corpora/ASV/extracted/MRK-joined.txt
 
-✅ Renaming complete across all subdirectories!
+--- First 1000 characters of RUT ---
+
+And it came to pass in the days when the judges judged, that there was a famine in the land. And a certain man of Beth-lehem-judah went to sojourn in the country of Moab, he, and his wife, and his two sons. And the name of the man was Elimelech, and the name of his wife Naomi, and the name of his two sons Mahlon and Chilion, Ephrathites of Beth-lehem-judah. And they came into the country of Moab, and continued there. And Elimelech, Naomi’s husband, died; and she was left, and her two sons. And they took them wives of the women of Moab; the name of the one was Orpah, and the name of the other Ruth: and they dwelt there about ten years. And Mahlon and Chilion died both of them; and the woman was left of her two children and of her husband. Then she arose with her daughters-in-law, that she might return from the country of Moab: for she had heard in the country of Moab how that Jehovah had visited his people in giving them bread. And she went forth out of the place where she was, and her 
+
+--- First 1000 characters of EST ---
+
+Now it came to pass in the days of Ahasuerus (this is Ahasuerus who reigned from India even unto Ethiopia, over a hundred and seven and twenty provinces), that in those days, when the king Ahasuerus sat on the throne of his kingdom, which was in Shushan the palace, in the third year of his reign, he made a feast unto all his princes and his servants; the power of Persia and Media, the nobles and princes of the provinces, being before him; when he showed the riches of his glorious kingdom and the honor of his excellent majesty many days, even a hundred and fourscore days. And when these days were fulfilled, the king made a feast unto all the people that were present in Shushan the palace, both great and small, seven days, in the court of the garden of the king’s palace. There were hangings of white cloth, of green, and of blue, fastened with cords of fine linen and purple to silver rings and pillars of marble: the couches were of gold and silver, upon a pavement of red, and white, and y
+
+--- First 1000 characters of JON ---
+
+Now the word of Jehovah came unto Jonah the son of Amittai, saying, Arise, go to Nineveh, that great city, and cry against it; for their wickedness is come up before me. But Jonah rose up to flee unto Tarshish from the presence of Jehovah; and he went down to Joppa, and found a ship going to Tarshish: so he paid the fare thereof, and went down into it, to go with them unto Tarshish from the presence of Jehovah. But Jehovah sent out a great wind upon the sea, and there was a mighty tempest on the sea, so that the ship was like to be broken. Then the mariners were afraid, and cried every man unto his god; and they cast forth the wares that were in the ship into the sea, to lighten it unto them. But Jonah was gone down into the innermost parts of the ship; and he lay, and was fast asleep. So the shipmaster came to him, and said unto him, What meanest thou, O sleeper? arise, call upon thy God, if so be that God will think upon us, that we perish not. And they said every one to his fellow, 
+
+--- First 1000 characters of JUD ---
+
+Jude, a servant of Jesus Christ, and brother of James, to them that are called, beloved in God the Father, and kept for Jesus Christ: Mercy unto you and peace and love be multiplied. Beloved, while I was giving all diligence to write unto you of our common salvation, I was constrained to write unto you exhorting you to contend earnestly for the faith which was once for all delivered unto the saints. For there are certain men crept in privily, even they who were of old written of beforehand unto this condemnation, ungodly men, turning the grace of our God into lasciviousness, and denying our only Master and Lord, Jesus Christ. Now I desire to put you in remembrance, though ye know all things once for all, that the Lord, having saved a people out of the land of Egypt, afterward destroyed them that believed not. And angels that kept not their own principality, but left their proper habitation, he hath kept in everlasting bonds under darkness unto the judgment of the great day. Even as Sod
+
+--- First 1000 characters of DAN ---
+
+In the third year of the reign of Jehoiakim king of Judah came Nebuchadnezzar king of Babylon unto Jerusalem, and besieged it. And the Lord gave Jehoiakim king of Judah into his hand, with part of the vessels of the house of God; and he carried them into the land of Shinar to the house of his god: and he brought the vessels into the treasure-house of his god. And the king spake unto Ashpenaz the master of his eunuchs, that he should bring in certain of the children of Israel, even of the seed royal and of the nobles; youths in whom was no blemish, but well-favored, and skilful in all wisdom, and endued with knowledge, and understanding science, and such as had ability to stand in the king’s palace; and that he should teach them the learning and the tongue of the Chaldeans. And the king appointed for them a daily portion of the king’s dainties, and of the wine which he drank, and that they should be nourished three years; that at the end thereof they should stand before the king. Now am
+
+--- First 1000 characters of MRK ---
+
+The beginning of the gospel of Jesus Christ, the Son of God. Even as it is written in Isaiah the prophet, Behold, I send my messenger before thy face, Who shall prepare thy way; The voice of one crying in the wilderness, Make ye ready the way of the Lord, Make his paths straight; John came, who baptized in the wilderness and preached the baptism of repentance unto remission of sins. And there went out unto him all the country of Judaea, and all they of Jerusalem; and they were baptized of him in the river Jordan, confessing their sins. And John was clothed with camel’s hair, and had a leathern girdle about his loins, and did eat locusts and wild honey. And he preached, saying, There cometh after me he that is mightier than I, the latchet of whose shoes I am not worthy to stoop down and unloose. I baptized you in water; but he shall baptize you in the Holy Spirit. And it came to pass in those days, that Jesus came from Nazareth of Galilee, and was baptized of John in the Jordan. And str
 #+end_example
+
+
+** ASV - diff. https://github.com/seven1m/open-bibles/blob/master/eng-web.usfx.xml
+#+begin_src python :results output
+import os
+import re
+import html
+from lxml import etree
+
+# Define the target books (using USFX book IDs)
+target_books = {"EST", "RUT", "JDT", "JON", "DAN", "MRK"}
+
+# Function to clean and decode text (for English)
+def clean_text(text):
+    if text:
+        # Decode HTML entities (e.g., convert &#8217; to ’)
+        text = html.unescape(text)
+        # Normalize whitespace
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+    return ""
+
+# Recursive function to extract raw text while skipping elements with a "caller" attribute.
+def get_raw_text(elem):
+    parts = []
+    if elem.text:
+        parts.append(elem.text)
+    for child in elem:
+        # If the child has a "caller" attribute, skip its text/children, but include its tail.
+        if child.get("caller") is not None:
+            if child.tail:
+                parts.append(child.tail)
+        else:
+            parts.append(get_raw_text(child))
+            if child.tail:
+                parts.append(child.tail)
+    return "".join(parts)
+
+# Function to extract text from the USFX file for each target book as one continuous string,
+# including <p> and <q> elements after a <c> element, while handling elements with a "caller" attribute.
+def extract_books_from_usfx(file_path, output_dir, target_books):
+    tree = etree.parse(file_path)
+    root = tree.getroot()
+
+    for book in root.findall(".//book"):
+        book_id = book.get("id")
+        if book_id not in target_books:
+            continue
+
+        # Select <p> and <q> elements that come after a chapter marker (<c>)
+        elements = book.xpath(".//c/following-sibling::*[self::p or self::q]")
+        text_parts = []
+        for elem in elements:
+            raw_text = get_raw_text(elem)
+            cleaned_text = clean_text(raw_text)
+            if cleaned_text:
+                text_parts.append(cleaned_text)
+
+        # Join extracted texts into one continuous string.
+        full_text = " ".join(text_parts)
+        # Remove parentheses, brackets, and quotation marks (both straight and curly)
+        full_text = re.sub(r"[()\[\]“”‘’\"]", "", full_text)
+
+        output_file = os.path.join(output_dir, f"{book_id}-joined.txt")
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(full_text)
+        print(f"✅ Extracted: {output_file}")
+
+        # Print the first 1000 characters as a preview
+        print(f"\n--- First 1000 characters of {book_id} ---\n")
+        print(full_text[:1000])
+
+
+# Define input and output paths
+usfx_file_path = "/home/gnosis/Documents/au_work/main/corpora/ASV/eng-web.usfx.xml"
+output_dir = "/home/gnosis/Documents/au_work/main/corpora/ASV/extracted/"
+os.makedirs(output_dir, exist_ok=True)
+
+# Run extraction on the specified USFX file
+extract_books_from_usfx(usfx_file_path, output_dir, target_books)
+#+end_src
+
+
+
+
+
+* Get various textual editions and annotations from bjarke_test - dat/greek/bjarke_test/
+** Index of SBLGNT files - source specific
+#+begin_src python
+  import os
+  import csv
+
+  def generate_index_csv(directory, source_name, output_csv):
+      """
+      Generates an index.csv file listing details of files in the specified directory.
+
+      Parameters:
+      - directory (str): Path to the directory containing the files.
+      - source_name (str): Identifier for the source, e.g., 'sblgnt'.
+      - output_csv (str): Path to the output CSV file.
+      """
+      # Prepare the header for the CSV file
+      fieldnames = ['src_path', 'source_name', 'source_id', 'document_id', 'title']
+
+      # Open the output CSV file for writing
+      with open(output_csv, mode='w', newline='', encoding='utf-8') as csv_file:
+          writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+          writer.writeheader()
+
+          # Traverse the directory structure
+          for root, _, files in os.walk(directory):
+              for file in files:
+                  # Construct the full source path
+                  src_path = os.path.join(root, file)
+                  # Derive the source_id by removing the file extension
+                  source_id, _ = os.path.splitext(file)
+                  # Construct the document_id by combining source_name and source_id
+                  document_id = f"{source_name}_{source_id}"
+                  # For demonstration, set the title as the source_id; adjust as needed
+                  title = source_id
+
+                  # Write the file details to the CSV
+                  writer.writerow({
+                      'src_path': src_path,
+                      'source_name': source_name,
+                      'source_id': source_id,
+                      'document_id': document_id,
+                      'title': title
+                  })
+
+  # Example usage:
+  directory = '/home/gnosis/Documents/au_work/main/comp_antiquity/dat/greek/raw_data/SBLGNT-master/data/sblgnt/xml/'
+  source_name = 'SBLGNT'
+  output_csv = 'index.csv'
+  generate_index_csv(directory, source_name, output_csv)
+#+end_src
+
+#+RESULTS:
+: None
+** Index of bjarke_test
+#+begin_src python
+import os
+import csv
+
+def generate_index_csv(base_directory, output_csv):
+    """
+    Generates an index.csv file listing details of files in each subdirectory of the specified base directory.
+
+    Parameters:
+    - base_directory (str): Path to the base directory containing subdirectories.
+    - output_csv (str): Path to the output CSV file.
+    """
+    # Prepare the header for the CSV file
+    fieldnames = ['src_path', 'source_name', 'source_id', 'document_id', 'title']
+
+    # Open the output CSV file for writing
+    with open(output_csv, mode='w', newline='', encoding='utf-8') as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+
+        # Iterate over each subdirectory in the base directory
+        for source_name in os.listdir(base_directory):
+            source_path = os.path.join(base_directory, source_name)
+            if os.path.isdir(source_path):
+                # Traverse the subdirectory structure
+                for root, _, files in os.walk(source_path):
+                    for file in files:
+                        # Construct the full source path
+                        src_path = os.path.join(root, file)
+                        # Derive the source_id by removing the file extension
+                        source_id, _ = os.path.splitext(file)
+                        # Construct the document_id by combining source_name and source_id
+                        document_id = f"{source_name}_{source_id}"
+                        # Set the title as the source_id; adjust as needed
+                        title = source_id
+
+                        # Write the file details to the CSV
+                        writer.writerow({
+                            'src_path': src_path,
+                            'source_name': source_name,
+                            'source_id': source_id,
+                            'document_id': document_id,
+                            'title': title
+                        })
+
+# Example usage:
+base_directory = '/home/gnosis/Documents/au_work/main/comp_antiquity/dat/greek/bjarke_test'
+output_csv = '/home/gnosis/Documents/au_work/main/comp_antiquity/dat/greek/bjarke_test/index.csv'
+generate_index_csv(base_directory, output_csv)
+#+end_src
+
+#+RESULTS:
+: None
+** Moving & renaming of src in bjarke_test --> dat/export/bjarke_test & following doc_dump format
+#+begin_src python
+import os
+import csv
+import pandas as pd
+from pathlib import Path
+from shutil import copy2
+import logging
+import re
+import argparse
+
+CLEANED_DATA_PATH = "/home/gnosis/Documents/au_work/main/comp_antiquity/dat/greek/bjarke_test/"
+
+def update_document_id(document_id: str) -> str:
+    """Switch between grc1 and grc2 in document_id."""
+    if "grc1" in document_id:
+        return re.sub(r'grc1', 'grc2', document_id)
+    elif "grc2" in document_id:
+        return re.sub(r'grc2', 'grc1', document_id)
+    return document_id  # If neither, return as-is
+
+def read_index(csv_path: str) -> dict:
+    """
+    Reads the CSV file and returns a dictionary mapping document_id to the file path,
+    including alternate versions via update_document_id.
+    """
+    index = {}
+    with open(csv_path, newline='', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile, delimiter=',')  # Adjust delimiter if needed
+        for row in reader:
+            document_id = row['document_id']
+            # Use 'src_path' column to get the file path
+            src_path = row.get('src_path')
+            if not src_path:
+                continue  # Skip rows without a file path
+            
+            # Ensure src_path starts with CLEANED_DATA_PATH
+            if not src_path.startswith(CLEANED_DATA_PATH):
+                continue  # Skip unexpected paths
+
+            # Store the original ID mapping
+            index[document_id] = src_path
+
+            # Also add the alternate document ID (switch grc1 <-> grc2) if not already present
+            updated_document_id = update_document_id(document_id)
+            if updated_document_id not in index:
+                index[updated_document_id] = src_path
+
+            print(f"Loaded {document_id} (also checking {updated_document_id}) -> {src_path}")
+    return index
+
+def export_target_files(src_dir: str, source_index_path: str, target_csv_path: str, dest_dir: str, log_file: str):
+    """
+    Exports a subsection of files identified in target_csv based on metadata in source_index.csv.
+    Files are copied to dest_dir (preserving their source subfolder), renamed with the new document ID,
+    and an index CSV is generated.
+    """
+    dest_dir_path = Path(dest_dir)
+    dest_dir_path.mkdir(parents=True, exist_ok=True)
+    
+    log_file_path = Path(log_file)
+    log_file_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    logging.basicConfig(filename=str(log_file_path), level=logging.INFO,
+                        format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    try:
+        source_index_df = pd.read_csv(source_index_path)
+        target_csv_df = pd.read_csv(target_csv_path)
+    except Exception as e:
+        logging.error(f"Error loading CSV files: {e}")
+        return
+
+    # Build index dictionary from source_index; using read_index from earlier
+    index_dict = read_index(source_index_path)
+    
+    if target_csv_df.empty:
+        logging.warning("Target CSV is empty; no files to process.")
+        return
+
+    export_index_data = []
+    export_index_csv_path = None  # Initialize variable
+
+    for _, row in target_csv_df.iterrows():
+        try:
+            original_doc_id = row["document_id"]
+            new_document_id = str(row["updated_ids"]).strip()
+            
+            # Check for matching document_id in the index, or its alternate
+            if original_doc_id in index_dict:
+                matched_id = original_doc_id
+            else:
+                alt_id = update_document_id(original_doc_id)
+                if alt_id in index_dict:
+                    matched_id = alt_id
+                    logging.info(f"Document ID updated: {original_doc_id} matched via alternate {alt_id}")
+                else:
+                    logging.error(f"Document ID {original_doc_id} (or its alternate) not found in index.")
+                    continue
+
+            src_path = index_dict[matched_id]
+            full_src_path = Path(src_path)
+            # Compute the relative subpath using the fixed base: CLEANED_DATA_PATH
+            relative_subpath = full_src_path.relative_to(Path(CLEANED_DATA_PATH))
+            src_subfolder = relative_subpath.parent
+            
+            # Build destination folder: dest_dir/<src_subfolder>/<new_document_id>/texts/
+            new_file_dir = dest_dir_path / src_subfolder / str(new_document_id) / "texts"
+            new_file_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Destination file path: <new_document_id>-joined.txt in new_file_dir
+            dest_file_path = new_file_dir / f"{new_document_id}-joined.txt"
+            
+            copy2(src_path, dest_file_path)
+            logging.info(f"Copied: {src_path} -> {dest_file_path}")
+            
+            export_index_data.append({
+                "orig_document_id": original_doc_id,
+                "new_document_id": new_document_id,
+                "source_relative_path": str(relative_subpath),
+                "destination_relative_path": str(dest_file_path.relative_to(dest_dir_path))
+            })
+        except Exception as e:
+            logging.error(f"Error processing file {row.get('document_id', 'Unknown')}: {e}")
+
+    if export_index_data:
+        export_index_df = pd.DataFrame(export_index_data)
+        export_index_csv_path = dest_dir_path / "new_index.csv"
+        try:
+            export_index_df.to_csv(export_index_csv_path, index=False, encoding="utf-8")
+            logging.info(f"New metadata index saved to {export_index_csv_path}")
+        except Exception as e:
+            logging.error(f"Error saving new index CSV: {e}")
+    else:
+        logging.warning("No files were processed; new metadata index not created.")
+
+    if export_index_csv_path:
+        print(f"Export completed. New index saved to {export_index_csv_path}. Check log at {log_file_path}.")
+    else:
+        print(f"Export completed, but no new index was created. Check log at {log_file_path}.")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Export selected texts based on document IDs from the master index.")
+    parser.add_argument("--src_dir", required=True, help="Base directory for cleaned_parsed_data.")
+    parser.add_argument("--source_index", required=True, help="Path to the source index CSV file.")
+    parser.add_argument("--target_csv", required=True, help="Path to the target CSV file with document IDs to extract.")
+    parser.add_argument("--dest_dir", required=True, help="Destination directory for the exported files.")
+    parser.add_argument("--log_file", required=True, help="Path to the log file for errors and updates.")
+    args = parser.parse_args()
+    
+    print("Starting export process...")
+    export_target_files(args.src_dir, args.source_index, args.target_csv, args.dest_dir, args.log_file)
+    print("Export process complete.")
+#+end_src

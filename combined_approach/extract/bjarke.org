@@ -1,0 +1,11 @@
+* Introduktion
+Jeg har vedlagt kilde-teksterne fra deres oprindelse, mine diverse scripts, typisk samlet i .org filer foruden dedikerede .py-scripts.
+** Struktur
+Så først og fremmest er der i /dat "raw", dernæst "extract", som indeholder teksterne, som blev kørt igennem med NLP'en, derpå "annotations", som er opdelt i hhv. mapper med annotationer i .json (efter NDJSON/JSONL format) samt .conllu filer, hvori der er blevet samlet de forskellige input fra de to modeller, som jeg har brugt - en NER & en normal transformer-model
+
+I /src vedlægger jeg de forskellige scripts lige umiddelbart - de er også på github though
+** Prepocessing & navne - undskyld
+
+Derudover vedlægger jeg de preprocessed tekster, i denne omgang kun tekster med punktummer. Jeg har ikke haft tid til at navnegive filerne korrekt, men jeg har lavet en oversigt til dig - matched_book_data.csv, hvori SBLGNT-filerne er kaldt efter deres græske navne (Greek title-kolonnen), for LXX_Brenton teksterne er der nogle gange en længere titel/alternativ titel, som står i en separat kolonne. LXX_Brenton teksterne er opkaldt med udgangspunkt i deres forkertelse/abbreviation - de er angivet i "Book Abbreviation". Teksterne har jeg så matchet med de forskellige tekster & tekstnavne fra databasen (se google sheets linket).
+Jeg har ikke kunne fået opdateret alle navnene i forhold til det navn, som findes i databasen i google sheets, til de ID'er, som jeg har matchet teksterne med. Dog tænker jeg bare, at man ville kunne lave en lille renaming script til at iterere over de forskellige tekster, ignore suffixet "_nlp_ready.txt" osv., og derigennem give teksterne de rette navne.
+Sorry, at jeg ikke lige fik nået dette skridt

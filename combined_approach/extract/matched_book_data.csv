@@ -1,0 +1,80 @@
+Source,Book Abbreviation,Greek Title,Long Title OR Alternative Name,Metadata_ID,Metadata_Title,Match_Score,META_ID_NAME
+SBLGNT,Ac,ΠΡΑΞΕΙΣ ΑΠΟΣΤΟΛΩΝ,,789,Acts - ACT-ΠΡΑΞΕΙΣ ΑΠΟΣΤΟΛΩΝ,1.0,Acts - ACT-ΠΡΑΞΕΙΣ ΑΠΟΣΤΟΛΩΝ
+SBLGNT,Col,ΠΡΟΣ ΚΟΛΟΣΣΑΕΙΣ,,851,Colossians - COL-ΠΡΟΣ ΚΟΛΟΣΣΑΕΙΣ,1.0,Colossians - COL-ΠΡΟΣ ΚΟΛΟΣΣΑΕΙΣ
+SBLGNT,Eph,ΠΡΟΣ ΕΦΕΣΙΟΥΣ,,857,Ephesians - EPH-ΠΡΟΣ ΕΦΕΣΙΟΥΣ,1.0,Ephesians - EPH-ΠΡΟΣ ΕΦΕΣΙΟΥΣ
+SBLGNT,Gal,ΠΡΟΣ ΓΑΛΑΤΑΣ,,834,Galatians - GAL-ΠΡΟΣ ΓΑΛΑΤΑΣ,1.0,Galatians - GAL-ΠΡΟΣ ΓΑΛΑΤΑΣ
+SBLGNT,Heb,ΠΡΟΣ ΕΒΡΑΙΟΥΣ,,795,Hebrews - HEB-ΠΡΟΣ ΕΒΡΑΙΟΥΣ,1.0,Hebrews - HEB-ΠΡΟΣ ΕΒΡΑΙΟΥΣ
+SBLGNT,Jn,ΚΑΤΑ ΙΩΑΝΝΗΝ,,804,1 John - JN-ΙΩΑΝΝΟΥ ΕΠΙΣΤΟΛΗ ΠΡΩΤΗ,1.0,1 John - JN-ΙΩΑΝΝΟΥ ΕΠΙΣΤΟΛΗ ΠΡΩΤΗ
+SBLGNT,Jud,ΙΟΥΔΑ,,815,Jude - JUD-ΙΟΥΔΑ ΕΠΙΣΤΟΛΗ (LETTER OF JUDE - HISTORIOGRAPHY...???),1.0,Jude - JUD-ΙΟΥΔΑ ΕΠΙΣΤΟΛΗ (LETTER OF JUDE - HISTORIOGRAPHY...???)
+SBLGNT,Lu,ΚΑΤΑ ΛΟΥΚΑΝ,,842,The Gospel of Luke - LUK-ΚΑΤΑ ΛΟΥΚΑΝ,1.0,The Gospel of Luke - LUK-ΚΑΤΑ ΛΟΥΚΑΝ
+SBLGNT,Mk,ΚΑΤΑ ΜΑΡΚΟΝ,,783,The Gospel of Mark - MRK-ΚΑΤΑ ΜΑΡΚΟΝ,1.0,The Gospel of Mark - MRK-ΚΑΤΑ ΜΑΡΚΟΝ
+SBLGNT,Mt,ΚΑΤΑ ΜΑΘΘΑΙΟΝ,,794,The Gospel of Matthew - MAT-ΚΑΤΑ ΜΑΘΘΑΙΟΝ,1.0,The Gospel of Matthew - MAT-ΚΑΤΑ ΜΑΘΘΑΙΟΝ
+SBLGNT,Php,ΠΡΟΣ ΦΙΛΙΠΠΗΣΙΟΥΣ,,853,Philippians - PHP-ΠΡΟΣ ΦΙΛΙΠΠΗΣΙΟΥΣ,1.0,Philippians - PHP-ΠΡΟΣ ΦΙΛΙΠΠΗΣΙΟΥΣ
+SBLGNT,Phm,ΠΡΟΣ ΦΙΛΗΜΟΝΑ,,849,Philemon - PHM-ΠΡΟΣ ΦΙΛΗΜΟΝΑ,1.0,Philemon - PHM-ΠΡΟΣ ΦΙΛΗΜΟΝΑ
+SBLGNT,Re,ΑΠΟΚΑΛΥΨΙΣ ΙΩΑΝΝΟΥ,,800,Revelation - REV-ΑΠΟΚΑΛΥΨΙΣ ΙΩΑΝΝΟΥ,1.0,Revelation - REV-ΑΠΟΚΑΛΥΨΙΣ ΙΩΑΝΝΟΥ
+SBLGNT,Ro,ΠΡΟΣ ΡΩΜΑΙΟΥΣ,,796,Romans - ROM-ΠΡΟΣ ΡΩΜΑΙΟΥΣ,1.0,Romans - ROM-ΠΡΟΣ ΡΩΜΑΙΟΥΣ
+SBLGNT,Tit,ΠΡΟΣ ΤΙΤΟΝ,,814,Titus - TIT-ΠΡΟΣ ΤΙΤΟΝ,1.0,Titus - TIT-ΠΡΟΣ ΤΙΤΟΝ
+LXX_Brenton,GEN,ΓΕΝΕΣΙΣ,ΓΕΝΕΣΙΣ,847,Genesis - GEN-ΓΕΝΕΣΙΣ,1.0,Genesis - GEN-ΓΕΝΕΣΙΣ
+LXX_Brenton,EXO,ΕΞΟΔΟΣ,ΕΞΟΔΟΣ,803,Exodus - EXO-ΕΞΟΔΟΣ,1.0,Exodus - EXO-ΕΞΟΔΟΣ
+LXX_Brenton,LEV,ΛΕΥΙΤΙΚΟΝ,ΛΕΥΙΤΙΚΟΝ,805,Leviticus - LEV-ΛΕΥΙΤΙΚΟΝ,1.0,Leviticus - LEV-ΛΕΥΙΤΙΚΟΝ
+LXX_Brenton,NUM,ΑΡΙΘΜΟΙ,ΑΡΙΘΜΟΙ,846,Numbers - NUM-ΑΡΙΘΜΟΙ,1.0,Numbers - NUM-ΑΡΙΘΜΟΙ
+LXX_Brenton,DEU,ΔΕΥΤΕΡΟΝΟΜΙΟΝ,ΔΕΥΤΕΡΟΝΟΜΙΟΝ,801,Deuteronomy - JOS-ΔΕΥΤΕΡΟΝΟΜΙΟΝ (cf. entry no. 1794...!),1.0,Deuteronomy - JOS-ΔΕΥΤΕΡΟΝΟΜΙΟΝ (cf. entry no. 1794...!)
+LXX_Brenton,JOS,ΙΗΣΟΥΣ,ΙΗΣΟΥΣ ΝΑΥΗ,801,Deuteronomy - JOS-ΔΕΥΤΕΡΟΝΟΜΙΟΝ (cf. entry no. 1794...!),1.0,Deuteronomy - JOS-ΔΕΥΤΕΡΟΝΟΜΙΟΝ (cf. entry no. 1794...!)
+LXX_Brenton,JDG,ΚΡΙΤΑΙ,ΚΡΙΤΑΙ,816,Judges - JDG-ΚΡΙΤΑΙ (Codex Alexandrinus TLG = 008...?),1.0,Judges - JDG-ΚΡΙΤΑΙ (Codex Alexandrinus TLG = 008...?)
+LXX_Brenton,RUT,ΡΟΥΘ,ΡΟΥΘ,819,Ruth - RUT-ΡΟΥΘ,1.0,Ruth - RUT-ΡΟΥΘ
+LXX_Brenton,1SA,ΒΑΣΙΛΕΙΩΝ Α,ΒΑΣΙΛΕΙΩΝ Α,793,1 Samuel - SA-ΒΑΣΙΛΕΙΩΝ Α (Regnorum i TLG = 011),1.0,1 Samuel - SA-ΒΑΣΙΛΕΙΩΝ Α (Regnorum i TLG = 011)
+LXX_Brenton,2SA,ΒΑΣΙΛΕΙΩΝ Β,ΒΑΣΙΛΕΙΩΝ Β,836,2 Samuel - SA-ΒΑΣΙΛΕΙΩΝ Β (Regnorum ii TLG = 012),1.0,2 Samuel - SA-ΒΑΣΙΛΕΙΩΝ Β (Regnorum ii TLG = 012)
+LXX_Brenton,1KI,ΒΑΣΙΛΕΙΩΝ Γ,ΒΑΣΙΛΕΙΩΝ Γ,844,1 Kings - KI-ΒΑΣΙΛΕΙΩΝ Γ (Regnorum iii TLG = 013),1.0,1 Kings - KI-ΒΑΣΙΛΕΙΩΝ Γ (Regnorum iii TLG = 013)
+LXX_Brenton,2KI,ΒΑΣΙΛΕΙΩΝ Δ,ΒΑΣΙΛΕΙΩΝ Δ,813,2 Kings - KI-ΒΑΣΙΛΕΙΩΝ Δ (Regnorum iv TLG = 014),1.0,2 Kings - KI-ΒΑΣΙΛΕΙΩΝ Δ (Regnorum iv TLG = 014)
+LXX_Brenton,1CH,ΠΑΡΑΛΕΙΠΟΜΕΝΩΝ Α,ΠΑΡΑΛΕΙΠΟΜΕΝΩΝ Α,835,1 Chronicles - CH-ΠΑΡΑΛΕΙΠΟΜΕΝΩΝ Α,1.0,1 Chronicles - CH-ΠΑΡΑΛΕΙΠΟΜΕΝΩΝ Α
+LXX_Brenton,2CH,ΠΑΡΑΛΕΙΠΟΜΕΝΩΝ Β,ΠΑΡΑΛΕΙΠΟΜΕΝΩΝ Β,832,2 Chronicles - CH-ΠΑΡΑΛΕΙΠΟΜΕΝΩΝ Β,1.0,2 Chronicles - CH-ΠΑΡΑΛΕΙΠΟΜΕΝΩΝ Β
+LXX_Brenton,EZR,ΕΣΔΡΑΣ,ΕΣΔΡΑΣ,830,1 Esdras - EZR-ΕΣΔΡΑΣ Α (Esdras 1 TLG = 0527.017),1.0,1 Esdras - EZR-ΕΣΔΡΑΣ Α (Esdras 1 TLG = 0527.017)
+LXX_Brenton,JOB,ΙΩΒ,ΙΩΒ,848,Job - JOB-ΙΩΒ,1.0,Job - JOB-ΙΩΒ
+LXX_Brenton,PSA,ΨΑΛΜΟΙ,ΨΑΛΜΟΙ,802,Psalms - PSA-ΨΑΛΜΟΙ,1.0,Psalms - PSA-ΨΑΛΜΟΙ
+LXX_Brenton,PRO,ΠΑΡΟΙΜΙΑΙ,ΠΑΡΟΙΜΙΑΙ ΕΑΛΩΜΩΝΤΟΣ,829,Proverbs - PRO-ΠΑΡΟΙΜΙΑΙ,1.0,Proverbs - PRO-ΠΑΡΟΙΜΙΑΙ
+LXX_Brenton,ECC,ΕΚΚΛΗΣΙΑΣΤΗΣ,ΕΚΚΛΗΣΙΑΣΤΗΣ,810,Ecclesiastes - ECC-ΕΚΚΛΗΣΙΑΣΤΗΣ,1.0,Ecclesiastes - ECC-ΕΚΚΛΗΣΙΑΣΤΗΣ
+LXX_Brenton,SNG,ΑΣΜΑ,ΑΣΜΑ,854,The Song of Songs - SNG-ΑΣΜΑ (Canticum),1.0,The Song of Songs - SNG-ΑΣΜΑ (Canticum)
+LXX_Brenton,ISA,ΗΣΑΙΑΣ,ΗΣΑΙΑΣ,855,Isaiah - ISA-ΗΣΑΙΑΣ,1.0,Isaiah - ISA-ΗΣΑΙΑΣ
+LXX_Brenton,JER,ΙΕΡΕΜΙΑΣ,ΙΕΡΕΜΙΑΣ,791,Jeremiah - JER-ΙΕΡΕΜΙΑΣ,1.0,Jeremiah - JER-ΙΕΡΕΜΙΑΣ
+LXX_Brenton,LAM,ΘΡΗΝΟΙ,ΘΡΗΝΟΙ ΙΕΡΕΜΙΟΥ,850,Lamentations - LAM-ΘΡΗΝΟΙ,1.0,Lamentations - LAM-ΘΡΗΝΟΙ
+LXX_Brenton,EZK,ΙΕΖΕΚΙΗΛ,ΙΕΖΕΚΙΗΛ,809,Ezekiel - EZK-ΙΕΖΕΚΙΗΛ,1.0,Ezekiel - EZK-ΙΕΖΕΚΙΗΛ
+LXX_Brenton,HOS,ΩΣΗΕ. Αʹ,ΩΣΗΕ. Αʹ,779,Hosea - HOS-ΩΣΗΕ,1.0,Hosea - HOS-ΩΣΗΕ
+LXX_Brenton,JOL,ΙΩΗΛ. Δʹ,ΙΩΗΛ. Δʹ,856,Joel - JOL-ΙΩΗΛ,1.0,Joel - JOL-ΙΩΗΛ
+LXX_Brenton,OBA,ΟΒΔΕΙΟΥ. Εʹ,ΟΒΔΕΙΟΥ. Εʹ,790,Obadiah - OBA-ΑΒΔΙΟΥ (Abdias),1.0,Obadiah - OBA-ΑΒΔΙΟΥ (Abdias)
+LXX_Brenton,JON,ΙΩΝΑΣ. ϛʹ,ΙΩΝΑΣ. ϛʹ,837,Jonah - JON-ΙΩΝΑΣ,1.0,Jonah - JON-ΙΩΝΑΣ
+LXX_Brenton,MIC,ΜΙΧΑΙΑΣ. Γʹ,ΜΙΧΑΙΑΣ. Γʹ,824,Micah - MIC-ΜΙΧΑΙΑΣ,1.0,Micah - MIC-ΜΙΧΑΙΑΣ
+LXX_Brenton,NAM,ΝΑΟΥΜ. Ζʹ,ΝΑΟΥΜ. Ζʹ,860,Nahum - NAM-ΝΑΟΥΜ,1.0,Nahum - NAM-ΝΑΟΥΜ
+LXX_Brenton,HAB,ΑΜΒΑΚΟΥΜ. Ηʹ,ΑΜΒΑΚΟΥΜ. Ηʹ,817,Habakkuk - HAB-ΑΜΒΑΚΟΥΜ,1.0,Habakkuk - HAB-ΑΜΒΑΚΟΥΜ
+LXX_Brenton,ZEP,ΣΟΦΟΝΙΑΣ. Θʹ,ΣΟΦΟΝΙΑΣ. Θʹ,827,Zephaniah - ZEP-ΣΟΦΟΝΙΑΣ,1.0,Zephaniah - ZEP-ΣΟΦΟΝΙΑΣ
+LXX_Brenton,HAG,ΑΓΓΑΙΟΣ. Ιʹ,ΑΓΓΑΙΟΣ. Ιʹ,823,Haggai - HAG-ΑΓΓΑΙΟΣ,1.0,Haggai - HAG-ΑΓΓΑΙΟΣ
+LXX_Brenton,ZEC,ΖΑΧΑΡΙΑΣ. ΙΑʹ,ΖΑΧΑΡΙΑΣ. ΙΑʹ,808,Zechariah - ZEC-ΖΑΧΑΡΙΑΣ,1.0,Zechariah - ZEC-ΖΑΧΑΡΙΑΣ
+LXX_Brenton,MAL,ΜΑΛΑΧΙΑΣ. ΙΒʹ,ΜΑΛΑΧΙΑΣ. ΙΒʹ,806,Malachi - MAL-ΜΑΛΑΧΙΑΣ,1.0,Malachi - MAL-ΜΑΛΑΧΙΑΣ
+LXX_Brenton,TOB,ΤΩΒΙΤ,ΤΩΒΙΤ,821,Tobit - TOB-ΤΩΒΙΤ (Tobias) (TLG = 021 eller 022...?),1.0,Tobit - TOB-ΤΩΒΙΤ (Tobias) (TLG = 021 eller 022...?)
+LXX_Brenton,JDT,ΙΟΥΔΙΘ,ΙΟΥΔΙΘ,852,Judith - JDT-ΙΟΥΔΙΘ,1.0,Judith - JDT-ΙΟΥΔΙΘ
+LXX_Brenton,ESG,ΕΣΘΗΡ,ΕΣΘΗΡ,797,Esther - ESG-ΕΣΘΗΡ,1.0,Esther - ESG-ΕΣΘΗΡ
+LXX_Brenton,WIS,ΣΟΦΙΑ,ΣΟΦΙΑ ΣΑΛΩΜΩΝ,840,Wisdom of Solomon - WIS-ΣΟΦΙΑ ΣΑΛΩΜΩΜΟΣ,1.0,Wisdom of Solomon - WIS-ΣΟΦΙΑ ΣΑΛΩΜΩΜΟΣ
+LXX_Brenton,BAR,ΒΑΡΟΥΧ,ΒΑΡΟΥΧ,833,1 Baruch - BAR-ΒΑΡΟΥΧ (TLG = 050),1.0,1 Baruch - BAR-ΒΑΡΟΥΧ (TLG = 050)
+LXX_Brenton,LJE,ΕΠΙΣΤΟΛΗ ΙΕΡΕΜΙΟΥ,ΕΠΙΣΤΟΛΗ ΙΕΡΕΜΙΟΥ,807,The Letter of Jeremiah - LJE-ΕΠΙΣΤΟΛΗ ΙΕΡΕΜΙΟΥ,1.0,The Letter of Jeremiah - LJE-ΕΠΙΣΤΟΛΗ ΙΕΡΕΜΙΟΥ
+LXX_Brenton,SUS,ΣΩΣΑΝΝΑ,ΣΩΣΑΝΝΑ,831,Susanna - SUS-ΣΟΥΣΑΝΝΑ (translatio Graeca TLG = 054...?),1.0,Susanna - SUS-ΣΟΥΣΑΝΝΑ (translatio Graeca TLG = 054...?)
+LXX_Brenton,BEL,ΒΗΛ,ΒΗΛ ΚΑΙ ΔΡΑΚΩΝ,784,Bel and the Dragon - BEL-ΒΗΛ ΚΑΙ ΔΡΑΚΩΝΝ (TLG = 058),1.0,Bel and the Dragon - BEL-ΒΗΛ ΚΑΙ ΔΡΑΚΩΝΝ (TLG = 058)
+LXX_Brenton,DAG,ΔΑΝΙΗΛ (Ελληνικά),ΔΑΝΙΗΛ (Ελληνικά),818,Daniel - DAG-ΔΑΝΙΗΛ (TLG = 056),1.0,Daniel - DAG-ΔΑΝΙΗΛ (TLG = 056)
+SBLGNT,1Th,ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Α,,841,1 Thessalonians - TH-ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Αʹ,0.975609756097561,1 Thessalonians - TH-ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Αʹ
+SBLGNT,2Th,ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Β,,786,2 Thessalonians - TH-ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Βʹ,0.975609756097561,2 Thessalonians - TH-ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Βʹ
+SBLGNT,1Co,ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Α,,812,1 Corinthians - CO-ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Αʹ,0.9714285714285714,1 Corinthians - CO-ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Αʹ
+SBLGNT,2Co,ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Β,,822,2 Corinthians - CO-ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Βʹ,0.9714285714285714,2 Corinthians - CO-ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Βʹ
+SBLGNT,1Tim,ΠΡΟΣ ΤΙΜΟΘΕΟΝ Α,,788,1 Timothy - TI-ΠΡΟΣ ΤΙΜΟΘΕΟΝ Αʹ,0.967741935483871,1 Timothy - TI-ΠΡΟΣ ΤΙΜΟΘΕΟΝ Αʹ
+SBLGNT,2Tim,ΠΡΟΣ ΤΙΜΟΘΕΟΝ Β,,787,2 Timothy - TI-ΠΡΟΣ ΤΙΜΟΘΕΟΝ Βʹ,0.967741935483871,2 Timothy - TI-ΠΡΟΣ ΤΙΜΟΘΕΟΝ Βʹ
+LXX_Brenton,1MA,ΜΑΚΚΑΒΑΙΩΝ Αʹ,ΜΑΚΚΑΒΑΙΩΝ Αʹ,859,1 Maccabees - MA-ΜΑΚΚΑΒΑΙΩΝ Α,0.96,1 Maccabees - MA-ΜΑΚΚΑΒΑΙΩΝ Α
+LXX_Brenton,2MA,ΜΑΚΚΑΒΑΙΩΝ Βʹ,ΜΑΚΚΑΒΑΙΩΝ Βʹ,826,2 Maccabees - MA-ΜΑΚΚΑΒΑΙΩΝ Β,0.96,2 Maccabees - MA-ΜΑΚΚΑΒΑΙΩΝ Β
+LXX_Brenton,3MA,ΜΑΚΚΑΒΑΙΩΝ Γʹ,ΜΑΚΚΑΒΑΙΩΝ Γʹ,811,3 Maccabees - MA-ΜΑΚΚΑΒΑΙΩΝ Γ,0.96,3 Maccabees - MA-ΜΑΚΚΑΒΑΙΩΝ Γ
+LXX_Brenton,4MA,ΜΑΚΚΑΒΑΙΩΝ Δʹ,ΜΑΚΚΑΒΑΙΩΝ Δʹ,843,4 Maccabees - MA-ΜΑΚΚΑΒΑΙΩΝ Δ,0.96,4 Maccabees - MA-ΜΑΚΚΑΒΑΙΩΝ Δ
+LXX_Brenton,1ES,ΕΣΔΡΑΣ. Αʹ,ΕΣΔΡΑΣ. Αʹ,830,1 Esdras - EZR-ΕΣΔΡΑΣ Α (Esdras 1 TLG = 0527.017),0.8888888888888888,1 Esdras - EZR-ΕΣΔΡΑΣ Α (Esdras 1 TLG = 0527.017)
+SBLGNT,1Jn,ΙΩΑΝΝΟΥ Α,,804,1 John - JN-ΙΩΑΝΝΟΥ ΕΠΙΣΤΟΛΗ ΠΡΩΤΗ,0.8,1 John - JN-ΙΩΑΝΝΟΥ ΕΠΙΣΤΟΛΗ ΠΡΩΤΗ
+SBLGNT,1Pe,ΠΕΤΡΟΥ Α,,858,1 Peter - PE-ΠΕΤΡΟΥ ΕΠΙΣΤΟΛΗ ΔΕΥΤΕΡΑ,0.8,1 Peter - PE-ΠΕΤΡΟΥ ΕΠΙΣΤΟΛΗ ΔΕΥΤΕΡΑ
+SBLGNT,2Jn,ΙΩΑΝΝΟΥ Β,,785,1 John - JN-ΙΩΑΝΝΟΥ ΕΠΙΣΤΟΛΗ ΠΡΩΤΗ,0.8,1 John - JN-ΙΩΑΝΝΟΥ ΕΠΙΣΤΟΛΗ ΠΡΩΤΗ
+SBLGNT,2Pe,ΠΕΤΡΟΥ Β,,838,1 Peter - PE-ΠΕΤΡΟΥ ΕΠΙΣΤΟΛΗ ΔΕΥΤΕΡΑ,0.8,1 Peter - PE-ΠΕΤΡΟΥ ΕΠΙΣΤΟΛΗ ΔΕΥΤΕΡΑ
+SBLGNT,3Jn,ΙΩΑΝΝΟΥ Γ,,780,1 John - JN-ΙΩΑΝΝΟΥ ΕΠΙΣΤΟΛΗ ΠΡΩΤΗ,0.8,1 John - JN-ΙΩΑΝΝΟΥ ΕΠΙΣΤΟΛΗ ΠΡΩΤΗ
+LXX_Brenton,MAN,ΠΡΟΣΕΥΧΗ,ΠΡΟΣΕΥΧΗ ΜΑΝΑΣΣΗ ΥΙΟΥ ΕΖΕΚΙΟΥ,IGNORE,1 Maccabees - MA-ΜΑΚΚΑΒΑΙΩΝ Α,0.8,1 Maccabees - MA-ΜΑΚΚΑΒΑΙΩΝ Α
+SBLGNT,Jam,ΙΑΚΩΒΟΥ,,845,Manually edited,Manually edited,Manually edited
+LXX_Brenton,AMO,ΑΜΩΣ. Βʹ,ΑΜΩΣ. Βʹ,828,Manually edited,Manually edited,Manually edited
+LXX_Brenton,SIR,ΣΕΙΡΑΧ,ΣΟΦΙΑ ΣΕΙΡΑΧ,820,Manually edited,Manually edited,Manually edited

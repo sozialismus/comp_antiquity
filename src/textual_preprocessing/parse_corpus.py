@@ -34,7 +34,7 @@ def main() -> None:
     # Producing paths for raw files
     perseus_path = os.path.join(RAW_PATH, "canonical-greekLit/data")
     first1k_path = os.path.join(RAW_PATH, "First1KGreek/data")
-    sepa_path = os.path.join(RAW_PATH, "SEPA")
+    SBLGNT_path = os.path.join(RAW_PATH, "SBLGNT-master/data/sblgnt/xml")
     pseudepigrapha_path = os.path.join(
         RAW_PATH, "Online-Critical-Pseudepigrapha/static/docs"
     )
@@ -46,7 +46,7 @@ def main() -> None:
     first1k_files = glob.glob(
         os.path.join(first1k_path, "**/*grc*.xml"), recursive=True
     )
-    sepa_files = glob.glob(os.path.join(sepa_path, "**/*.usx"), recursive=True)
+    sepa_files = glob.glob(os.path.join(SBLGNT_path, "**/*.xml"), recursive=True)
     pseudepigrapha_files = glob.glob(
         os.path.join(pseudepigrapha_path, "*.xml")
     )
@@ -69,11 +69,11 @@ def main() -> None:
         dest=OUT_PATH,
     )
 
-    print(" - SEPA")
+    print(" - SBLGNT")
     process_files(
         paths=sepa_files,
         parser=SEPAParser(),
-        source_name="SEPA",
+        source_name="SBLGNT",
         dest=OUT_PATH,
     )
 

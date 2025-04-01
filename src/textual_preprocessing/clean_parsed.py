@@ -10,7 +10,7 @@ UNWANTED_CHARS = r"[0-9a-zA-Z!#€%&/()?\[\]^_`{|}~¶\-\"'“”‘’«»‹›
 
 
 # Greek punctuation
-GREEK_PUNCTUATION = {",", ".", ";", "·", "„", "“", "…"}
+GREEK_PUNCTUATION = {",", ".", ";", "·"}
 
 
 def is_latin(text: str) -> bool:

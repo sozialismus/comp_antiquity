@@ -1,0 +1,80 @@
+Source,Book Abbreviation,Greek Title,Long Title OR Alternative Name
+SBLGNT,1Co,ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Α,N/A
+SBLGNT,1Jn,ΙΩΑΝΝΟΥ Α,N/A
+SBLGNT,1Pe,ΠΕΤΡΟΥ Α,N/A
+SBLGNT,1Th,ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Α,N/A
+SBLGNT,1Tim,ΠΡΟΣ ΤΙΜΟΘΕΟΝ Α,N/A
+SBLGNT,2Co,ΠΡΟΣ ΚΟΡΙΝΘΙΟΥΣ Β,N/A
+SBLGNT,2Jn,ΙΩΑΝΝΟΥ Β,N/A
+SBLGNT,2Pe,ΠΕΤΡΟΥ Β,N/A
+SBLGNT,2Th,ΠΡΟΣ ΘΕΣΣΑΛΟΝΙΚΕΙΣ Β,N/A
+SBLGNT,2Tim,ΠΡΟΣ ΤΙΜΟΘΕΟΝ Β,N/A
+SBLGNT,3Jn,ΙΩΑΝΝΟΥ Γ,N/A
+SBLGNT,Ac,ΠΡΑΞΕΙΣ ΑΠΟΣΤΟΛΩΝ,N/A
+SBLGNT,Col,ΠΡΟΣ ΚΟΛΟΣΣΑΕΙΣ,N/A
+SBLGNT,Eph,ΠΡΟΣ ΕΦΕΣΙΟΥΣ,N/A
+SBLGNT,Gal,ΠΡΟΣ ΓΑΛΑΤΑΣ,N/A
+SBLGNT,Heb,ΠΡΟΣ ΕΒΡΑΙΟΥΣ,N/A
+SBLGNT,Jam,ΙΑΚΩΒΟΥ,N/A
+SBLGNT,Jn,ΚΑΤΑ ΙΩΑΝΝΗΝ,N/A
+SBLGNT,Jud,ΙΟΥΔΑ,N/A
+SBLGNT,Lu,ΚΑΤΑ ΛΟΥΚΑΝ,N/A
+SBLGNT,Mk,ΚΑΤΑ ΜΑΡΚΟΝ,N/A
+SBLGNT,Mt,ΚΑΤΑ ΜΑΘΘΑΙΟΝ,N/A
+SBLGNT,Php,ΠΡΟΣ ΦΙΛΙΠΠΗΣΙΟΥΣ,N/A
+SBLGNT,Phm,ΠΡΟΣ ΦΙΛΗΜΟΝΑ,N/A
+SBLGNT,Re,ΑΠΟΚΑΛΥΨΙΣ ΙΩΑΝΝΟΥ,N/A
+SBLGNT,Ro,ΠΡΟΣ ΡΩΜΑΙΟΥΣ,N/A
+SBLGNT,Tit,ΠΡΟΣ ΤΙΤΟΝ,N/A
+LXX_Brenton,GEN,ΓΕΝΕΣΙΣ,ΓΕΝΕΣΙΣ
+LXX_Brenton,EXO,ΕΞΟΔΟΣ,ΕΞΟΔΟΣ
+LXX_Brenton,LEV,ΛΕΥΙΤΙΚΟΝ,ΛΕΥΙΤΙΚΟΝ
+LXX_Brenton,NUM,ΑΡΙΘΜΟΙ,ΑΡΙΘΜΟΙ
+LXX_Brenton,DEU,ΔΕΥΤΕΡΟΝΟΜΙΟΝ,ΔΕΥΤΕΡΟΝΟΜΙΟΝ
+LXX_Brenton,JOS,ΙΗΣΟΥΣ,ΙΗΣΟΥΣ ΝΑΥΗ
+LXX_Brenton,JDG,ΚΡΙΤΑΙ,ΚΡΙΤΑΙ
+LXX_Brenton,RUT,ΡΟΥΘ,ΡΟΥΘ
+LXX_Brenton,1SA,ΒΑΣΙΛΕΙΩΝ Α,ΒΑΣΙΛΕΙΩΝ Α
+LXX_Brenton,2SA,ΒΑΣΙΛΕΙΩΝ Β,ΒΑΣΙΛΕΙΩΝ Β
+LXX_Brenton,1KI,ΒΑΣΙΛΕΙΩΝ Γ,ΒΑΣΙΛΕΙΩΝ Γ
+LXX_Brenton,2KI,ΒΑΣΙΛΕΙΩΝ Δ,ΒΑΣΙΛΕΙΩΝ Δ
+LXX_Brenton,1CH,ΠΑΡΑΛΕΙΠΟΜΕΝΩΝ Α,ΠΑΡΑΛΕΙΠΟΜΕΝΩΝ Α
+LXX_Brenton,2CH,ΠΑΡΑΛΕΙΠΟΜΕΝΩΝ Β,ΠΑΡΑΛΕΙΠΟΜΕΝΩΝ Β
+LXX_Brenton,EZR,ΕΣΔΡΑΣ,ΕΣΔΡΑΣ
+LXX_Brenton,JOB,ΙΩΒ,ΙΩΒ
+LXX_Brenton,PSA,ΨΑΛΜΟΙ,ΨΑΛΜΟΙ
+LXX_Brenton,PRO,ΠΑΡΟΙΜΙΑΙ,ΠΑΡΟΙΜΙΑΙ ΕΑΛΩΜΩΝΤΟΣ
+LXX_Brenton,ECC,ΕΚΚΛΗΣΙΑΣΤΗΣ,ΕΚΚΛΗΣΙΑΣΤΗΣ
+LXX_Brenton,SNG,ΑΣΜΑ,ΑΣΜΑ
+LXX_Brenton,ISA,ΗΣΑΙΑΣ,ΗΣΑΙΑΣ
+LXX_Brenton,JER,ΙΕΡΕΜΙΑΣ,ΙΕΡΕΜΙΑΣ
+LXX_Brenton,LAM,ΘΡΗΝΟΙ,ΘΡΗΝΟΙ ΙΕΡΕΜΙΟΥ
+LXX_Brenton,EZK,ΙΕΖΕΚΙΗΛ,ΙΕΖΕΚΙΗΛ
+LXX_Brenton,HOS,ΩΣΗΕ. Αʹ,ΩΣΗΕ. Αʹ
+LXX_Brenton,JOL,ΙΩΗΛ. Δʹ,ΙΩΗΛ. Δʹ
+LXX_Brenton,AMO,ΑΜΩΣ. Βʹ,ΑΜΩΣ. Βʹ
+LXX_Brenton,OBA,ΟΒΔΕΙΟΥ. Εʹ,ΟΒΔΕΙΟΥ. Εʹ
+LXX_Brenton,JON,ΙΩΝΑΣ. ϛʹ,ΙΩΝΑΣ. ϛʹ
+LXX_Brenton,MIC,ΜΙΧΑΙΑΣ. Γʹ,ΜΙΧΑΙΑΣ. Γʹ
+LXX_Brenton,NAM,ΝΑΟΥΜ. Ζʹ,ΝΑΟΥΜ. Ζʹ
+LXX_Brenton,HAB,ΑΜΒΑΚΟΥΜ. Ηʹ,ΑΜΒΑΚΟΥΜ. Ηʹ
+LXX_Brenton,ZEP,ΣΟΦΟΝΙΑΣ. Θʹ,ΣΟΦΟΝΙΑΣ. Θʹ
+LXX_Brenton,HAG,ΑΓΓΑΙΟΣ. Ιʹ,ΑΓΓΑΙΟΣ. Ιʹ
+LXX_Brenton,ZEC,ΖΑΧΑΡΙΑΣ. ΙΑʹ,ΖΑΧΑΡΙΑΣ. ΙΑʹ
+LXX_Brenton,MAL,ΜΑΛΑΧΙΑΣ. ΙΒʹ,ΜΑΛΑΧΙΑΣ. ΙΒʹ
+LXX_Brenton,TOB,ΤΩΒΙΤ,ΤΩΒΙΤ
+LXX_Brenton,JDT,ΙΟΥΔΙΘ,ΙΟΥΔΙΘ
+LXX_Brenton,ESG,ΕΣΘΗΡ,ΕΣΘΗΡ
+LXX_Brenton,WIS,ΣΟΦΙΑ,ΣΟΦΙΑ ΣΑΛΩΜΩΝ
+LXX_Brenton,SIR,ΣΕΙΡΑΧ,ΣΟΦΙΑ ΣΕΙΡΑΧ
+LXX_Brenton,BAR,ΒΑΡΟΥΧ,ΒΑΡΟΥΧ
+LXX_Brenton,LJE,ΕΠΙΣΤΟΛΗ ΙΕΡΕΜΙΟΥ,ΕΠΙΣΤΟΛΗ ΙΕΡΕΜΙΟΥ
+LXX_Brenton,SUS,ΣΩΣΑΝΝΑ,ΣΩΣΑΝΝΑ
+LXX_Brenton,BEL,ΒΗΛ,ΒΗΛ ΚΑΙ ΔΡΑΚΩΝ
+LXX_Brenton,1MA,ΜΑΚΚΑΒΑΙΩΝ Αʹ,ΜΑΚΚΑΒΑΙΩΝ Αʹ
+LXX_Brenton,2MA,ΜΑΚΚΑΒΑΙΩΝ Βʹ,ΜΑΚΚΑΒΑΙΩΝ Βʹ
+LXX_Brenton,1ES,ΕΣΔΡΑΣ. Αʹ,ΕΣΔΡΑΣ. Αʹ
+LXX_Brenton,MAN,ΠΡΟΣΕΥΧΗ,ΠΡΟΣΕΥΧΗ ΜΑΝΑΣΣΗ ΥΙΟΥ ΕΖΕΚΙΟΥ
+LXX_Brenton,3MA,ΜΑΚΚΑΒΑΙΩΝ Γʹ,ΜΑΚΚΑΒΑΙΩΝ Γʹ
+LXX_Brenton,4MA,ΜΑΚΚΑΒΑΙΩΝ Δʹ,ΜΑΚΚΑΒΑΙΩΝ Δʹ
+LXX_Brenton,DAG,ΔΑΝΙΗΛ (Ελληνικά),ΔΑΝΙΗΛ (Ελληνικά)
