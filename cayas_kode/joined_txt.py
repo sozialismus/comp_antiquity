@@ -31,6 +31,6 @@ greek_output = extract_greek_text(xml_path)
 words = greek_output.split()
 text = ' '.join(words)
 
-clean_text = re.sub('[0-9a-zA-Z!#€%&/()=?\[\]^_`{|}~]', '', text)
+clean_text = re.sub('[0-9a-zA-Z!#€%&/()=?\[\]^_`{|}~«»→-˘¯“”〈〉†‘’]', '', text)
 
 print(text)
