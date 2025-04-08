@@ -62,7 +62,7 @@ def get_text(tree: etree.ElementTree) -> str:
     # but are not note, bibl, or foreign elements or their descendants.
     texts = tree.xpath(
         """//*
-       beyer    [local-name() = 'text']//
+           [local-name() = 'text']//
            *[not(local-name() = 'note') and
              not(local-name() = 'bibl') and
              not(local-name() = 'foreign') and

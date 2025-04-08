@@ -64,12 +64,56 @@ def get_language(version: etree.Element) -> str:
         return manuscript_language
 
 
-def get_text(version: etree.Element) -> str:
-    """Extracts textual content from a version of the book."""
+def get_text(version: etree.Element) -> List[dict]:
+    """
+    Extracts textual content from a version of the book, producing one entry
+    per manuscript where applicable.
+
+    Parameters
+    ----------
+    version: etree.Element
+        The XML element of the version to parse.
+
+    Returns
+    ----------
+    output: list of dictionaries
+        Each dictionary contains manuscript abbreviation and corresponding text.
+    """
     version_tree = etree.ElementTree(version)
-    texts = version_tree.xpath("//reading/text()")
-    text = "\n".join(texts)
-    return text
+
+    # Check if <manuscripts> is defined
+    manuscripts = version_tree.xpath("//manuscripts/ms[@show='yes']")
+    if manuscripts:
+        texts_by_ms = []
+        manuscript_keys = {ms.get("abbrev"): [] for ms in manuscripts}
+
+        # Collect readings grouped by manuscript at the unit level
+        units = version_tree.xpath("//unit")
+        for unit in units:
+            unit_readings_by_ms = {key: [] for key in manuscript_keys}
+            for reading in unit.xpath("./reading"):
+                mss = reading.get("mss", "").strip()  # Manuscripts associated with this reading
+                reading_text = reading.text.strip() if reading.text else ""
+                for ms_key in mss.split():
+                    if ms_key in unit_readings_by_ms:
+                        unit_readings_by_ms[ms_key].append(reading_text)
+            for ms_key, unit_readings in unit_readings_by_ms.items():
+                if unit_readings:
+                    manuscript_keys[ms_key].append(" ".join(unit_readings))
+
+        # Create separate outputs for each manuscript
+        for ms_key, readings in manuscript_keys.items():
+            if readings:
+                texts_by_ms.append({
+                    "manuscript": ms_key,
+                    "text": f"[{ms_key}]\n" + " ".join(readings).strip()
+                })
+        return texts_by_ms
+
+    else:
+        # No manuscripts; return entire text as a single entry
+        readings = version_tree.xpath("//reading/text()")
+        return [{"manuscript": None, "text": "\n".join(readings)}]
 
 
 def get_id(version: etree.Element, book: etree.Element) -> str:
@@ -80,24 +124,33 @@ def get_id(version: etree.Element, book: etree.Element) -> str:
     return book_id + "-" + version_title
 
 
+
 class PseudepigraphaParser(Parser):
     def parse_file(self, file: str) -> Iterable[Document]:
-        """Parses the file into an iterable of documents"""
+        """Parses the file into an iterable of documents, one per manuscript."""
         tree = etree.parse(file)
-        # Matches first book element in the parse tree (there's only one)
         book = tree.xpath("/book")[0]
         book_tree = etree.ElementTree(book)
-        # Matches all verison elements in the tree under book
         versions = book_tree.xpath("version")
+
         for version in versions:
             language = get_language(version)
-            doc: Document = {
-                "id": get_id(version=version, book=book),
-                "title": get_title(version=version, book=book),
-                "author": get_author(version=version),
-                "text": get_text(version=version),
-            }
-            # NOTE: Questionable solution, consider moving filtering up
-            # a couple of levels.
-            if language == "Greek":
-                yield doc
+            if language != "Greek":
+                continue
+
+            base_id = get_id(version=version, book=book)
+            title = get_title(version=version, book=book)
+            author = get_author(version=version)
+            texts_by_ms = get_text(version=version)
+
+            for manuscript_entry in texts_by_ms:
+                ms_suffix = manuscript_entry["manuscript"]
+                ms_suffix = f"-{ms_suffix}" if ms_suffix else ""
+                doc_id = f"{base_id}{ms_suffix}"
+                doc_title = f"{title} {ms_suffix}" if ms_suffix else title
+                yield {
+                    "id": doc_id,
+                    "title": doc_title,
+                    "author": author,
+                    "text": manuscript_entry["text"],
+                }

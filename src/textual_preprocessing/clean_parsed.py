@@ -1,25 +1,37 @@
 import os
 import re
+import unicodedata
 import pandas as pd
 from pathlib import Path
 from utils.text import remove_digits, remove_xml_refs  # Assuming these are available
 
 # Define unwanted characters/symbols
-# UNWANTED_CHARS = r"[0-9a-zA-Z!#€%&/()?\[\]^_`{|}~¶\-\"'“”‘’«»„‚‹›]"
-UNWANTED_CHARS = r"[0-9a-zA-Z!#€%&/()?\[\]^_`{|}~¶\-\"'“”‘’«»‹›„‚‟‛「」『』〝〞〟ՙ״؍〃༺༻]"
+# UNWANTED_CHARS = r"[0-9a-zA-Z!#€%&/()?\[\]^_{|}~¶\-\"'“”‘’«»„‚‹›]"
+# UNWANTED_CHARS = r"[0-9a-zA-Z!#€%&/()?\[\]^_{|}~¶\-\"'“”‘’«»‹›„‚‟‛「」『』〝〞〟ՙ״؍〃༺༻]"
+UNWANTED_CHARS = r"[0-9A-Za-z!#€%&/()?\[\]^_`{|}~¶<>\-\u0022\u0027\u201C\u201D\u2018\u2019\u00AB\u00BB\u2039\u203A\u201E\u201A\u201F\u201B\u300C\u300D\u300E\u300F\u301D\u301F\u0559\u05F4\u061D\u3003༺༻⋮⋯⸏⸎⸍⸌⸋⸊⸉⸈⸇⸆⸅⸄⸃⸂⸁⸀⏑¯˘〉〈=:]"
 
-
-# Greek punctuation
+# Greek punctuation to preserve
 GREEK_PUNCTUATION = {",", ".", ";", "·"}
+
+def normalize_greek_punctuation(text: str) -> str:
+    """
+    Ensures proper spacing for Greek punctuation:
+    - No space before punctuation
+    - Exactly one space after punctuation (unless end of string)
+    """
+    for p in GREEK_PUNCTUATION:
+        # Remove space before punctuation
+        text = re.sub(rf"\s+{re.escape(p)}", p, text)
+
+        # Ensure exactly one space after punctuation, unless it's end of line or followed by another punctuation
+        text = re.sub(rf"{re.escape(p)}(?![\s{re.escape(''.join(GREEK_PUNCTUATION))}]|$)", f"{p} ", text)
+
+    return text
 
 
 def is_latin(text: str) -> bool:
     """
     Checks if a string contains only Latin characters by inspecting each character.
-    Parameters:
-        text (str): The input string.
-    Returns:
-        bool: True if the text contains only Latin characters, False otherwise.
     """
     try:
         for char in text:  # Iterate character-by-character
@@ -29,14 +41,9 @@ def is_latin(text: str) -> bool:
     except TypeError:
         raise ValueError("Input to is_latin must be a string.")
 
-
 def contains_latin(text: str) -> bool:
     """
     Check if a string contains any Latin characters.
-    Parameters:
-        text (str): The input string.
-    Returns:
-        bool: True if the string contains any Latin characters, False otherwise.
     """
     try:
         for char in text:  # Iterate character-by-character
@@ -46,49 +53,45 @@ def contains_latin(text: str) -> bool:
     except TypeError:
         raise ValueError("Input to contains_latin must be a string.")
 
-
 def clean_text(text: str) -> str:
     """
-    Cleans the input text by removing unwanted symbols, digits, 
+    Cleans the input text by normalizing to NFC and then removing unwanted symbols, digits,
     and Latin characters while preserving Greek punctuation.
     
     Parameters:
-    text (str): The text to clean.
-
+        text (str): The text to clean.
+    
     Returns:
-    str: The cleaned text.
+        str: The cleaned text.
     """
+    # Normalize text to NFC: this will combine any decomposed diacritics
+    text = unicodedata.normalize("NFC", text)
+    
     # Remove digits
     text = remove_digits(text)
     
     # Remove XML references
     text = remove_xml_refs(text)
     
-    # Remove Latin characters if the text contains them
-    # if is_latin(text) or contains_latin(text):
-    #     text = re.sub(r"[a-zA-Z]", "", text)
-
+    # Remove Latin characters if any exist in the text
     if is_latin(text) or contains_latin(text):
         text = re.sub(r"[a-zA-Z]", "", text)
     
     # Remove unwanted characters (excluding Greek punctuation)
     text = re.sub(UNWANTED_CHARS, "", text)
     
+    # Ensure Greek punctuation is preserved properly with correct spacing
+    text = normalize_greek_punctuation(text)
 
     # Collapse multiple occurrences of any punctuation (e.g., "..." to ".")
     text = re.sub(r"\.{2,}", ".", text)  # Replace multiple full stops with a single one
     text = re.sub(r"\.\s*\.+", ".", text)  # Handles sequences like ". .." -> "."
-
-    # Fix single "hanging" full stops after punctuation or semantically meaningful tokens
-    text = re.sub(r"(?<=;\s)\.", "", text)  # Removes a single hanging "." after a semicolon (e.g., "; .")
-    text = re.sub(r"\s+\.(?=\s|$)", ".", text)  # Fixes cases where a full stop is orphaned (e.g., " ; . ")
-
-
-    # Ensure Greek punctuation is preserved properly with correct spacing
-    for punctuation in GREEK_PUNCTUATION:
-        # Use regex to ensure spacing around punctuation
-        text = re.sub(rf"(?<!\s){re.escape(punctuation)}(?!\s)", f" {punctuation} ", text)
-
+    
+    # Fix single "hanging" full stops after punctuation tokens
+    text = re.sub(r"(?<=;\s)\.", "", text)  # e.g., "; ." becomes ";"
+    text = re.sub(r"\s+\.(?=\s|$)", ".", text)  # Orphaned full stops
+    
+    
     # Collapse whitespace to single spaces
     text = re.sub(r"\s+", " ", text)
     return text.strip()
@@ -112,8 +115,8 @@ def process_files(src_dir: str, dest_dir: str):
     # Read the existing index.csv
     index_df = pd.read_csv(index_csv_path)
 
-    # Prepare index data for the new cleaned files
-    cleaned_index_data = []
+    # Keep track of metadata for subdirectory-specific indices
+    subdir_indices = {}
 
     # Process each row in the index.csv
     for _, row in index_df.iterrows():
@@ -123,6 +126,8 @@ def process_files(src_dir: str, dest_dir: str):
             source_name = row["source_name"]
             source_id = row["source_id"]
             document_id = row["document_id"]
+            title = row.get("title", "")
+            author = row.get("author", "")
 
             # Construct the new destination path in the cleaned folder
             rel_path = src_path.relative_to(src_dir)  # Preserve original structure
@@ -142,23 +147,36 @@ def process_files(src_dir: str, dest_dir: str):
             with open(dest_file_path, "w", encoding="utf-8") as f:
                 f.write(cleaned_content)
 
-            # Add metadata entry for the new index
-            cleaned_index_data.append({
+            # Add metadata entry for the subdirectory index
+            subdir = dest_file_path.parent
+            if subdir not in subdir_indices:
+                subdir_indices[subdir] = []
+            subdir_indices[subdir].append({
                 "src_path": str(src_path),
                 "dest_path": str(dest_file_path),
                 "source_name": source_name,
                 "source_id": source_id,
-                "document_id": document_id
+                "document_id": document_id,
+                "title": title,
+                "author": author
             })
 
         except Exception as e:
             print(f"Error processing file {src_path}: {e}")
 
-    # Save the new metadata to the index.csv in the destination directory
+    # Save the subdirectory-specific indices
+    for subdir, metadata in subdir_indices.items():
+        subdir_index_csv_path = subdir / "index.csv"
+        subdir_index_df = pd.DataFrame(metadata)
+        subdir_index_df.to_csv(subdir_index_csv_path, index=False, encoding="utf-8")
+        print(f"Subdirectory index saved to {subdir_index_csv_path}")
+
+    # Save the global new metadata to the index.csv in the destination directory
     cleaned_index_csv_path = Path(dest_dir) / "index.csv"
+    cleaned_index_data = [row for metadata in subdir_indices.values() for row in metadata]
     cleaned_index_df = pd.DataFrame(cleaned_index_data)
     cleaned_index_df.to_csv(cleaned_index_csv_path, index=False, encoding="utf-8")
-    print(f"New index metadata saved to {cleaned_index_csv_path}")
+    print(f"Global index metadata saved to {cleaned_index_csv_path}")
 
 
 if __name__ == "__main__":

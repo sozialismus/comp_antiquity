@@ -91,8 +91,8 @@ if __name__ == "__main__":
     setup_logging()
 
     # Define file paths
-    input_file = "dat/export/bjarke_test/perseus/321/texts/321-joined.txt"  # Replace with your actual file path
-    output_file = "dat/export/bjarke_test/perseus/321/annotations/321-joined_test.txt"  # Replace with desired output path
+    input_file = "dat/greek/cleaned_parsed_data/perseus/tlg0085.tlg005.perseus-grc2.txt"  # Replace with your actual file path
+    output_file = "dat/diff/agamenon.json"  # Replace with desired output path
     doc_name = Path(input_file).stem  # Extracts the filename without extension
 
     process_text_chunked(input_file, output_file, doc_name)

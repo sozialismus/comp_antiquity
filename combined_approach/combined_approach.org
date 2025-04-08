@@ -635,3 +635,54 @@ print("✅ Merged proiel_trf and NER outputs into CoNLL-U format.")
 
 
 
+
+* Difference in document_id's
+
+#+begin_src python :results output
+  import pandas as pd
+  import os
+  from pathlib import Path
+
+  # File paths (adjust as necessary)
+  legacy_file = "/home/gnosis/Documents/au_work/main/comp_antiquity/dat/greek/parsed_data/index_legacy.csv"
+  new_file = "/home/gnosis/Documents/au_work/main/comp_antiquity/dat/greek/parsed_data/index_new_without_manu.csv"
+  output_csv = "/home/gnosis/Documents/au_work/main/comp_antiquity/change/changed_document_ids.csv"
+
+  # Read the CSV files
+  legacy_df = pd.read_csv(legacy_file)
+  new_df = pd.read_csv(new_file)
+
+  # Function to filter out document_ids starting with "SEPA_" or "SEP_"
+  def filter_doc_ids(df):
+      mask = ~df["document_id"].str.startswith("SEPA_") & ~df["document_id"].str.startswith("SEP_")
+      return df[mask]
+
+  # Filter both DataFrames
+  legacy_df = filter_doc_ids(legacy_df)
+  new_df = filter_doc_ids(new_df)
+
+  # Merge the two DataFrames on document_id using an outer join
+  # The _merge column will indicate which side the row comes from:
+  # "both" means the document_id exists in both; "left_only" or "right_only" indicates a mismatch.
+  merged_df = pd.merge(
+      legacy_df, new_df,
+      on="document_id",
+      how="outer",
+      indicator=True,
+      suffixes=('_legacy', '_new')
+  )
+
+  # Identify rows where the document_id is not present in both files
+  changed_df = merged_df[merged_df["_merge"] != "both"]
+  num_changed = len(changed_df)
+
+  print(f"Number of document IDs that are not the exact same: {num_changed}")
+
+  # Ensure the output directory exists
+  Path(output_csv).parent.mkdir(parents=True, exist_ok=True)
+
+  # Save the results to a CSV file
+  changed_df.to_csv(output_csv, index=False, encoding="utf-8")
+  print(f"Results saved to {output_csv}")
+#+end_src
+

@@ -10,8 +10,10 @@ from pathlib import Path
 from utils.parsing import (
     process_files,
     PerseusParser,
-    SEPAParser,
+    # SEPAParser,
     PseudepigraphaParser,
+    AttalusScrapedTextParser,
+    SBLGNTParser,
 )
 
 # setting cwd
@@ -34,10 +36,13 @@ def main() -> None:
     # Producing paths for raw files
     perseus_path = os.path.join(RAW_PATH, "canonical-greekLit/data")
     first1k_path = os.path.join(RAW_PATH, "First1KGreek/data")
-    SBLGNT_path = os.path.join(RAW_PATH, "SBLGNT-master/data/sblgnt/xml")
+    # sepa_path = os.path.join(RAW_PATH, "SEPA")
     pseudepigrapha_path = os.path.join(
         RAW_PATH, "Online-Critical-Pseudepigrapha/static/docs"
     )
+    sblgnt_path = os.path.join(RAW_PATH, "SBLGNT-master/data/sblgnt/xml")
+    attalus_path = os.path.join(RAW_PATH, "attalus/")
+    
 
     # Getting all exact file paths
     perseus_files = glob.glob(
@@ -46,11 +51,13 @@ def main() -> None:
     first1k_files = glob.glob(
         os.path.join(first1k_path, "**/*grc*.xml"), recursive=True
     )
-    sepa_files = glob.glob(os.path.join(SBLGNT_path, "**/*.xml"), recursive=True)
+    # sepa_files = glob.glob(os.path.join(sepa_path, "**/*.usx"), recursive=True)
     pseudepigrapha_files = glob.glob(
         os.path.join(pseudepigrapha_path, "*.xml")
     )
-
+    sblgnt_files = glob.glob(os.path.join(sblgnt_path, "*.xml"))
+    attalus_files = glob.glob(os.path.join(attalus_path, "*.txt"))
+    
     print("Processing corpora:")
     print(" - Perseus")
     process_files(
@@ -69,19 +76,35 @@ def main() -> None:
         dest=OUT_PATH,
     )
 
-    print(" - SBLGNT")
-    process_files(
-        paths=sepa_files,
-        parser=SEPAParser(),
-        source_name="SBLGNT",
-        dest=OUT_PATH,
-    )
+    # print(" - SEPA")
+    # process_files(
+    #     paths=sepa_files,
+    #     parser=SEPAParser(),
+    #     source_name="SEPA",
+    #     dest=OUT_PATH,
+    # )
 
     print(" - Pseudepigrapha")
     process_files(
         paths=pseudepigrapha_files,
         parser=PseudepigraphaParser(),
         source_name="pseudepigrapha",
+        dest=OUT_PATH,
+    )
+
+    print(" - SBLGNT")
+    process_files(
+        paths=sblgnt_files,
+        parser=SBLGNTParser(),  # Use the new parser or an existing one
+        source_name="SBLGNT",
+        dest=OUT_PATH,
+    )
+
+    print(" - Attalus")
+    process_files(
+        paths=attalus_files,
+        parser=AttalusScrapedTextParser(),
+        source_name="attalus",
         dest=OUT_PATH,
     )
 
