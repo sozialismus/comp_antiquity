@@ -14,6 +14,7 @@ from utils.parsing import (
     PseudepigraphaParser,
     AttalusScrapedTextParser,
     SBLGNTParser,
+    LXXSweteParser,
 )
 
 # setting cwd
@@ -42,7 +43,7 @@ def main() -> None:
     )
     sblgnt_path = os.path.join(RAW_PATH, "SBLGNT-master/data/sblgnt/xml")
     attalus_path = os.path.join(RAW_PATH, "attalus/")
-    
+    eliranwong_path = os.path.join(RAW_PATH, "LXX-Swete-1930")
 
     # Getting all exact file paths
     perseus_files = glob.glob(
@@ -57,6 +58,11 @@ def main() -> None:
     )
     sblgnt_files = glob.glob(os.path.join(sblgnt_path, "*.xml"))
     attalus_files = glob.glob(os.path.join(attalus_path, "*.txt"))
+
+    eliranwong_files = {
+        "versification": os.path.join(eliranwong_path, "00-Swete_versification.csv"),
+        "text": os.path.join(eliranwong_path, "01-Swete_word_with_punctuations.csv"),
+    }
     
     print("Processing corpora:")
     print(" - Perseus")
@@ -95,7 +101,7 @@ def main() -> None:
     print(" - SBLGNT")
     process_files(
         paths=sblgnt_files,
-        parser=SBLGNTParser(),  # Use the new parser or an existing one
+        parser=SBLGNTParser(), 
         source_name="SBLGNT",
         dest=OUT_PATH,
     )
@@ -105,6 +111,14 @@ def main() -> None:
         paths=attalus_files,
         parser=AttalusScrapedTextParser(),
         source_name="attalus",
+        dest=OUT_PATH,
+    )
+
+    print(" - LXX Swete, eliranwong")
+    process_files(
+        paths=[eliranwong_files],  # dictionary in a list for iteration.
+        parser=LXXSweteParser(combine=True), #combine=True in order to get collected docs
+        source_name="eliranwong",
         dest=OUT_PATH,
     )
 

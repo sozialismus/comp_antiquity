@@ -1,4 +1,4 @@
-"""Script responsible for cleaning the corpus."""
+"""Script responsible for cleaning/processing the corpus."""
 import argparse
 import glob
 import multiprocessing
@@ -18,6 +18,8 @@ from utils.streams import stream_files
 from wandb.data_types import Plotly
 
 MAX_LENGTH = 10**4
+N_PROCESS = 8
+BATCH_SIZE = 32
 
 TOKEN_ATTRS = [
     "IS_ALPHA",
@@ -33,6 +35,7 @@ TOKEN_ATTRS = [
     "LIKE_EMAIL",
     "IS_STOP",
     "IS_QUOTE",
+    "IS_BRACKET",
     "IS_LEFT_PUNCT",
     "IS_RIGHT_PUNCT",
     "IS_CURRENCY",
@@ -91,53 +94,84 @@ def save_document(doc: Doc, dest: str) -> None:
     doc_bin = DocBin(attrs=TOKEN_ATTRS, docs=[doc])
     doc_bin.to_disk(dest)
 
+def split_text_on_full_stop(text: str, max_length: int) -> list:
+    """
+    Splits the text into chunks of at most max_length characters,
+    preferring to split at full stops. If no full stop is found,
+    it falls back to splitting at a newline, and if still not found,
+    it splits exactly at max_length.
+    """
+    segments = []
+    start = 0
+    text_length = len(text)
+    
+    while start < text_length:
+        # If the remaining text is short enough, append and break
+        if text_length - start <= max_length:
+            segments.append(text[start:].strip())
+            break
+        
+        # Look for the last full stop in the allowed slice
+        slice_end = start + max_length
+        segment = text[start:slice_end]
+        split_index = segment.rfind('.')
+        
+        if split_index != -1:
+            # We found a full stop, include it in the segment
+            end = start + split_index + 1
+        else:
+            # Fallback: try to break on newline
+            newline_index = segment.rfind('\n')
+            if newline_index != -1:
+                end = start + newline_index + 1
+            else:
+                # No full stop or newline; split at max_length directly
+                end = slice_end
+        
+        # Append the found segment and update start index
+        segments.append(text[start:end].strip())
+        start = end
+
+    return segments
 
 def process_document(text: str, nlp: Language, dest: str) -> None:
     """Turns text into a spaCy document.
     If the text is too long it is broken into lines and processed that way.
+    Processes texts in parallel using spaCy's nlp.pipe() with n_process and batch_size.
     """
-    torch.set_num_threads(1)
+    # we are CPU-based now, but pytorch may help restrict overloading
+    torch.set_num_threads(max(1, os.cpu_count() // 16))
+
     if len(text) > MAX_LENGTH:
-        # If the text is too long, it's broken into its lines.
-        texts = text.split("\n")
+        # If the text is too long, using our helper function, preferably breaking at full stops, otherwise it's broken into its lines.
+        texts = split_text_on_full_stop(text, MAX_LENGTH)
     else:
         texts = [text]
-    docs = list(nlp.pipe(texts))
+
+    # Use nlp.pipe() to process texts in parallel - I don't have the guts to try pooling
+    # n_process: number of parallel processes
+    # batch_size: number of texts to process in one go
+    docs = list(nlp.pipe(texts, n_process=N_PROCESS, batch_size=BATCH_SIZE))
+
     doc = Doc.from_docs(docs)
+
     save_document(doc, dest=dest)
-
-
-def process_doc_in_subprocess(text: str, nlp: Language, dest: str) -> None:
-    """Runs processing in subprocess and then
-    deletes that subprocess to free up all memory.
-    This is needed because spaCy slowly fills up
-    CUDA's memory for some reason.
-    Blocks execution so that no other subprocesses are started
-    (Because CUDA would act very strange.)
-    """
-    with multiprocessing.Manager():
-        process = multiprocessing.Process(
-            target=process_document,
-            kwargs={"text": text, "nlp": nlp, "dest": dest},
-        )
-        process.start()
-        process.join()
 
 
 def create_parser() -> argparse.ArgumentParser:
     """Creates parser for the CLI."""
     parser = argparse.ArgumentParser(
         prog="Corpus processor",
-        description="Processes all documents in a corpus on GPU",
+        description="Processes all documents in a corpus on CPU",
     )
-    parser.add_argument("--model", type=str, default="grc_dep_treebanks_trf")
-    parser.add_argument("--dest", type=str, default="dat/greek/clean_data/")
+    parser.add_argument("--model", type=str, default="grc_proiel_trf")
+    parser.add_argument("--dest", type=str, default="dat/greek/processed_data/")
     parser.add_argument(
-        "--src_index", type=str, default="dat/greek/parsed_data/index.csv"
+        "--src_index", type=str, default="dat/greek/cleaned_parsed_data/index.csv"
     )
-    parser.add_argument("--wandb_user", type=str, default="kardosdrur")
+    parser.add_argument("--wandb_user", type=str, default="sozialismus")
     parser.add_argument(
-        "--wandb_project", type=str, default="greek-spacy-cleaning"
+        "--wandb_project", type=str, default="model-tracking"
     )
     return parser
 
@@ -158,9 +192,6 @@ def main():
     # Logging into wandb for logging
     print("Initialising wandb")
     wandb.init(project=args.wandb_project, entity=args.wandb_user)
-
-    # Requiring GPU with spaCy
-    spacy.require_gpu()
 
     # Loading model
     print("Loading NLP model")
@@ -194,10 +225,9 @@ def main():
         lambda doc_id: os.path.join(args.dest, f"{doc_id}.spacy")
     )
 
-    # Setting multiprocessing to 'spawn' because of
-    # a bug in torch https://github.com/pytorch/pytorch/issues/17199
-    multiprocessing.set_start_method("spawn")
-    torch.set_num_threads(1)
+    # CPU-based now, but could be good for avoiding overload
+    torch.set_num_threads(max(1, os.cpu_count() // 16))
+
     # Saving SpaCy documents
     for doc_out_path, text, n_processed in zip(
         tqdm(doc_filenames), texts, range(n_left)
@@ -211,7 +241,7 @@ def main():
                 ),
             }
         )
-        process_doc_in_subprocess(text, nlp=nlp, dest=doc_out_path)
+        process_document(text, nlp=nlp, dest=doc_out_path)
 
     # Creating and saving index for cleaned documents
     index = pd.DataFrame(

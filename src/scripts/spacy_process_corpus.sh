@@ -1,6 +1,6 @@
 source environments/processing/bin/activate
 
-MODEL_CREATOR_NAME="janko"
+MODEL_CREATOR_NAME="jacobo"
 MODEL_NAME="grc_dep_treebanks_trf"
 DEST_PATH="dat/greek/processed_data"
 SRC_INDEX="dat/greek/parsed_data/index.csv"

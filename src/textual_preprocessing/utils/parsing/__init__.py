@@ -5,3 +5,4 @@ from utils.parsing.sepa import SEPAParser
 
 from utils.parsing.sblgnt import SBLGNTParser
 from utils.parsing.attalus import AttalusScrapedTextParser
+from utils.parsing.eliranwong import LXXSweteParser

@@ -1,22 +1,33 @@
 # Fetches all corpora from their source and puts them in the dat directory
+echo "Getting comp_antiquity"
+cd /
+git clone "https://github.com/sozialismus/comp_antiquity"
 
 echo "Creating directories"
+cd comp_antiquity/
 mkdir -p dat
 mkdir -p dat/greek
 mkdir -p dat/greek/raw_data
 
 cd dat/greek/raw_data/
-echo "Fetching raw corpora"
+echo "Fetching raw corpora - legacy data and other sources"
 
-echo " - Cloning Perseus"
-git clone "https://github.com/PerseusDL/canonical-greekLit"
-echo " - Cloning First1K Greek"
-git clone "https://github.com/OpenGreekAndLatin/First1KGreek"
+echo " - Cloning legacy data - Perseus, & First1k Greek"
+git clone "https://github.com/sozialismus/legacy-raw"
 echo " - Cloning Online Critical Pseudepigrapha"
 git clone "https://github.com/OnlineCriticalPseudepigrapha/Online-Critical-Pseudepigrapha.git"
+echo " - Cloning SBL Greek New Testament"
+git clone "https://github.com/LogosBible/SBLGNT"
+echo " - LXX-Swete-1930 by Eliranwong"
+git clone "https://github.com/eliranwong/LXX-Swete-1930.git"
+
+echo "Moving files from legacy_raw to dat"
+cd legacy-raw/
+cp -r First1KGreek attalus canonical-greekLit ..
 
 cd ..
 
-echo "Trying to unzip Septuagint data"
-sudo apt install unzip
-unzip "SEPA.zip" -d "raw_data/SEPA"
+# sepa files are not included in this run
+# echo "Trying to unzip Septuagint data"
+# sudo apt install unzip
+# unzip "SEPA.zip" -d "raw_data/SEPA"

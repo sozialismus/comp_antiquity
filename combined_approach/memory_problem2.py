@@ -50,7 +50,8 @@ def process_text(file_path, output_path, doc_name):
         lines = [line.strip() for line in f if line.strip()]  # ✅ Strip empty lines
 
     with open(output_path, "w", encoding="utf-8") as out_f:
-        for doc in nlp.pipe(lines, batch_size=10):  # ✅ Stream processing with batch efficiency
+        # use n_process, test multiprocessing
+        for doc in nlp.pipe(lines, batch_size=10, n_process=3):  # ✅ Stream processing with batch efficiency
             for sent in doc.sents:  # ✅ Maintain good sentence splitting
                 global_id = process_sentence(sent, out_f, global_id, doc_name)
 

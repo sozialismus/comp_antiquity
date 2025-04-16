@@ -2,6 +2,12 @@
 /dat
 src/preprocessing.zip
 
+# misc
+/change
+grecy.org
+grecy_lg.py
+grecy_lg_and_trf.org
+
 # Keys
 */**/*.key
 
