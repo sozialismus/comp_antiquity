@@ -39,7 +39,7 @@ def main() -> None:
     pseudepigrapha_path = os.path.join(
         RAW_PATH, "Online-Critical-Pseudepigrapha/static/docs"
     )
-    sblgnt_path = os.path.join(RAW_PATH, "SBLGNT-master/data/sblgnt/xml")
+    sblgnt_path = os.path.join(RAW_PATH, "SBLGNT/data/sblgnt/xml")
     attalus_path = os.path.join(RAW_PATH, "attalus/")
     eliranwong_path = os.path.join(RAW_PATH, "LXX-Swete-1930")
 
