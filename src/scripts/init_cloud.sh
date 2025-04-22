@@ -40,3 +40,4 @@ conda deactivate
 
 conda info --envs
 
+tail -f /dev/null

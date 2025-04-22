@@ -23,20 +23,31 @@ from tqdm import tqdm
 # from utils.streams import stream_files
 from wandb.data_types import Plotly
 
+      
 # Try importing NUMA libraries
 try:
     import numexpr
 except ImportError:
     numexpr = None
+
 try:
     import numa
-    # Check if NUMA is actually available/supported on the system
-    if not numa.available():
-        print("NUMA library loaded but not available/supported on this system.")
-        numa = None # Treat as not available if not supported
+    # Perform a basic check by trying to access a core function.
+    # If this works without error, we assume the library is functional
+    # and NUMA is likely supported to some extent by the system.
+    _ = numa.num_configured_nodes() # Example check
+    print("NUMA library ('pynuma') imported successfully.")
 except ImportError:
     print("NUMA Python library (e.g., 'pynuma') not installed. NUMA awareness disabled.")
     print("Suggestion: pip install pynuma")
+    numa = None
+except AttributeError:
+    # Handle cases where the library might exist but lack expected functions (less likely with pynuma)
+     print("Imported 'numa' library seems incomplete or incompatible.")
+     numa = None
+except Exception as e:
+    # Catch other errors during the initial check (e.g., syscall errors if NUMA not supported by OS/kernel)
+    print(f"NUMA library loaded but failed initial check (NUMA likely not supported by OS/hardware): {e}")
     numa = None
 
 # --- System Resource Configuration ---
