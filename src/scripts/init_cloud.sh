@@ -2,24 +2,15 @@
 # initialize ucloud - clone repo and init conda envs - trying to get proiel_trf and ner_trf to function
 cd /work
 
-echo "Rebasing project"
-cd comp_antiquity/
-
-git fetch origin
-
-git rebase --continue
-
-cd /work
-
 # Ensure Miniconda is available
 if [ ! -d "$HOME/miniconda3" ]; then
     echo "Miniconda not found, installing..."
-    curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-    bash Miniconda3-latest-Linux-x86_64.sh -b -p "$HOME/miniconda3"
+    curl -s -L -o /tmp/miniconda_installer.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+    bash /tmp/miniconda_installer.sh -b -f -p /work/miniconda3
+
 fi
 
 # Source conda environment so that 'conda' command is available.
-. "$HOME/miniconda3/etc/profile.d/conda.sh"
 eval "$(/work/miniconda3/bin/conda shell.bash hook)"
 
 conda init

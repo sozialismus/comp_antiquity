@@ -1,10 +1,6 @@
 # Fetches all corpora from their source and puts them in the dat directory
-echo "Getting comp_antiquity"
-cd /work
-git clone "https://github.com/sozialismus/comp_antiquity"
-
 echo "Creating directories"
-cd comp_antiquity/
+cd /work/comp_antiquity/
 mkdir -p dat
 mkdir -p dat/greek
 mkdir -p dat/greek/raw_data
