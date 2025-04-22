@@ -1,6 +1,6 @@
 # Fetches all corpora from their source and puts them in the dat directory
 echo "Getting comp_antiquity"
-cd /
+cd /work
 git clone "https://github.com/sozialismus/comp_antiquity"
 
 echo "Creating directories"
@@ -12,7 +12,7 @@ mkdir -p dat/greek/raw_data
 cd dat/greek/raw_data/
 echo "Fetching raw corpora - legacy data and other sources"
 
-echo " - Cloning legacy data - Perseus, & First1k Greek"
+echo " - Cloning legacy data - Attalus, Perseus, & First1k Greek"
 git clone "https://github.com/sozialismus/legacy-raw"
 echo " - Cloning Online Critical Pseudepigrapha"
 git clone "https://github.com/OnlineCriticalPseudepigrapha/Online-Critical-Pseudepigrapha.git"

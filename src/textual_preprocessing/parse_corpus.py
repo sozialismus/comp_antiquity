@@ -17,8 +17,6 @@ from utils.parsing import (
     LXXSweteParser,
 )
 
-# setting cwd
-os.chdir('/home/gnosis/Documents/au_work/main/comp_antiquity/')
 
 RAW_PATH = "dat/greek/raw_data"
 OUT_PATH = "dat/greek/parsed_data/"

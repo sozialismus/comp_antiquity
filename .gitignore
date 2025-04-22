@@ -7,6 +7,7 @@ src/preprocessing.zip
 grecy.org
 grecy_lg.py
 grecy_lg_and_trf.org
+test_spacy_version.py
 
 # Keys
 */**/*.key

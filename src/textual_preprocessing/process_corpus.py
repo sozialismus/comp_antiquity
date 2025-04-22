@@ -169,7 +169,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--src_index", type=str, default="dat/greek/cleaned_parsed_data/index.csv"
     )
-    parser.add_argument("--wandb_user", type=str, default="sozialismus")
+    parser.add_argument("--wandb_user", type=str, default="sozialismus-au")
     parser.add_argument(
         "--wandb_project", type=str, default="model-tracking"
     )

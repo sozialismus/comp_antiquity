@@ -42,7 +42,8 @@ dependencies:
       - cymem==2.0.11
       - filelock==3.17.0
       - fsspec==2025.2.0
-      - grc-ner-trf==3.7
+      # - grc-ner-trf==3.7
+      - https://github.com/jmyerston/greCy/releases/download/v3.7.5/grc_ner_trf-3.7.5-py3-none-any.whl
       - huggingface-hub==0.28.1
       - idna==3.10
       - jinja2==3.1.5
