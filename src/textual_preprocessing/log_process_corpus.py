@@ -30,7 +30,13 @@ except ImportError:
     numexpr = None
 try:
     import numa
+    # Check if NUMA is actually available/supported on the system
+    if not numa.available():
+        print("NUMA library loaded but not available/supported on this system.")
+        numa = None # Treat as not available if not supported
 except ImportError:
+    print("NUMA Python library (e.g., 'pynuma') not installed. NUMA awareness disabled.")
+    print("Suggestion: pip install pynuma")
     numa = None
 
 # --- System Resource Configuration ---
@@ -40,32 +46,41 @@ def configure_system_resources():
     cpu_count = os.cpu_count()
     available_memory_gb = psutil.virtual_memory().available / (1024 ** 3)
 
-    # For high-core-count servers, use 50% of cores for better throughput
-    # while leaving resources for the OS and other processes (used by nlp.pipe within workers)
-    n_process = max(1, int(cpu_count * 0.50))
+    # --- CRITICAL CHANGE HERE ---
+    # N_PROCESS_PIPE: Processes used by nlp.pipe *inside* each worker.
+    # Keep this LOW because we have ProcessPoolExecutor parallelism.
+    # Don't base it on total system cores directly. 2-4 is usually sufficient.
+    n_process_pipe = 4 # Reduced drastically from 32!
 
-    # Larger batch sizes for high-core systems (used by nlp.pipe within workers)
-    batch_size = max(16, min(int(available_memory_gb * 3), 128))
+    # BATCH_SIZE_PIPE: Batch size for nlp.pipe *inside* each worker.
+    # Can still be reasonably large.
+    batch_size_pipe = max(16, min(int(available_memory_gb * 3), 128)) # Keep original logic
 
-    # Scale max length more aggressively with available memory
-    # Increased cap from 10k to 20k as per suggestion
+    # MAX_LENGTH: Original logic, increased cap
     max_length = min(2 * 10**4, int(available_memory_gb * 8 * 10**3))
-    # Ensure max_length is reasonable, fallback to spaCy default if calculated value is too low or high
-    max_length = max(10000, min(max_length, 2 * 10**6)) # Keep within a sane range (10k to 2M)
+    max_length = max(10000, min(max_length, 2 * 10**6)) # Sane range
 
-    # Add NUMA awareness (assuming dual-socket Xeon Gold 6130 as per prompt)
-    # This should ideally be detected, but hardcoding for the specific case
-    numa_nodes = 2 # Defaulting to 2 based on prompt info
+    # NUMA_NODES: For ProcessPoolExecutor workers
+    numa_nodes = 2 # Defaulting based on prompt info (ideally detect this)
+    if numa:
+        try:
+            num_nodes_detected = numa.num_configured_nodes()
+            if num_nodes_detected > 0:
+                numa_nodes = num_nodes_detected
+            print(f"Detected {numa_nodes} NUMA nodes.")
+        except Exception as e:
+            print(f"Could not detect NUMA nodes via library, using default {numa_nodes}. Error: {e}")
 
-    # More threads for PyTorch tensor operations in workers
-    torch_threads = max(4, cpu_count // 8)
 
-    print(f"System Config: CPU={cpu_count}, MemGB={available_memory_gb:.2f}, CoresPerWorker={n_process}, PipeBatch={batch_size}, MaxLen={max_length}, TorchThreads={torch_threads}, NUMANodes={numa_nodes}")
+    # TORCH_THREADS: For PyTorch operations within each worker
+    torch_threads = max(4, cpu_count // (numa_nodes * 2)) # Distribute threads more evenly among workers
+
+    print(f"System Config: CPU={cpu_count}, MemGB={available_memory_gb:.2f}, CoresPerPipe={n_process_pipe}, PipeBatch={batch_size_pipe}, MaxLen={max_length}, TorchThreads={torch_threads}, NUMANodes={numa_nodes}")
 
     return {
         "MAX_LENGTH": max_length,
-        "N_PROCESS": n_process, # For nlp.pipe inside worker
-        "BATCH_SIZE": batch_size, # For nlp.pipe inside worker
+        "N_PROCESS_PIPE": n_process_pipe,      # RENAMED for clarity
+        "BATCH_SIZE_PIPE": batch_size_pipe,    # RENAMED for clarity
         "CPU_COUNT": cpu_count,
         "AVAILABLE_MEMORY_GB": available_memory_gb,
         "TORCH_THREADS": torch_threads, # For workers
@@ -75,40 +90,38 @@ def configure_system_resources():
 # Get system-specific parameters
 SYSTEM_CONFIG = configure_system_resources()
 MAX_LENGTH = SYSTEM_CONFIG["MAX_LENGTH"]
-N_PROCESS = SYSTEM_CONFIG["N_PROCESS"] # Used inside process_document's nlp.pipe call
-BATCH_SIZE = SYSTEM_CONFIG["BATCH_SIZE"] # Used inside process_document's nlp.pipe call
+# --- Adjusted Globals ---
+N_PROCESS_PIPE = SYSTEM_CONFIG["N_PROCESS_PIPE"]   # Use the new config value
+BATCH_SIZE_PIPE = SYSTEM_CONFIG["BATCH_SIZE_PIPE"] # Use the new config value
+# -----------------------
 
 
 # --- NUMA Awareness Setup ---
 
 def set_numa_awareness():
     """Set NUMA awareness if available"""
+    # (Function unchanged from previous version - relies on global `numa` and `numexpr`)
     numa_available = False
     try:
         if numexpr:
-            # Set numexpr to use multiple threads - good for Xeon processors
             numexpr.set_num_threads(SYSTEM_CONFIG["TORCH_THREADS"])
             print(f"NumExpr using {SYSTEM_CONFIG['TORCH_THREADS']} threads.")
 
-        # If numa library available, use it
-        if numa:
-            if numa.available():
-                # Let OS handle NUMA scheduling, seems generally preferred
-                # Or try numa.set_interleave_mask(numa.all_nodes_mask) for interleaving
-                # numa.set_preferred(None) # May not be needed if relying on OS scheduler + ProcessPoolExecutor affinity
-                print("NUMA library available.")
-                numa_available = True
-            else:
-                print("NUMA library loaded but not available on this system.")
+        if numa: # Check if library was successfully imported and available
+            print("NUMA library available and supported.")
+            numa_available = True
+            # Optional: Set affinity/policy here if desired, e.g.:
+            # numa.set_interleave_mask(numa.all_nodes_mask)
+            # print("Set NUMA policy to interleave.")
         else:
-             print("NUMA library not installed.")
+             print("NUMA library not installed or not supported on this system.")
         return numa_available
     except Exception as e:
         print(f"Error setting NUMA awareness: {e}")
         return False
 
 # --- Constants ---
-
+# (TOKEN_ATTRS unchanged)
 TOKEN_ATTRS = [ # Consider reducing this list if not all attributes are needed
     "IS_ALPHA", "IS_ASCII", "IS_DIGIT", "IS_LOWER", "IS_PUNCT", "IS_SPACE",
     "IS_TITLE", "IS_UPPER", "LIKE_URL", "LIKE_NUM", "LIKE_EMAIL", "IS_STOP",
@@ -118,8 +131,12 @@ TOKEN_ATTRS = [ # Consider reducing this list if not all attributes are needed
     "HEAD", "SENT_START", "SPACY", "LANG", "MORPH", "IDX",
 ]
 
-# --- Helper Functions ---
 
+# --- Helper Functions ---
+# (get_done_ids, progress_piechart, force_sync_directory, save_document,
+#  split_text_on_full_stop, log_nlp_statistics, log_system_metrics,
+#  log_server_metrics, manage_memory functions remain unchanged from previous version)
+# ... (paste unchanged helper functions here) ...
 def get_done_ids(path: str) -> List[str]:
     """Finds documents that have already been cleaned using pathlib"""
     dest_path = Path(path)
@@ -128,7 +145,6 @@ def get_done_ids(path: str) -> List[str]:
         # Use stem to get filename without extension, handles ".spacy" correctly
         ids = [p.stem for p in dest_path.glob("*.spacy")]
     return ids
-
 
 def progress_piechart(n_processed: int, n_total: int) -> go.Figure:
     """Draws piechart of progress"""
@@ -150,7 +166,6 @@ def progress_piechart(n_processed: int, n_total: int) -> go.Figure:
         width=500,
     )
     return fig
-
 
 def force_sync_directory(directory_path):
     """Force system to sync directory to disk.
@@ -186,7 +201,6 @@ def force_sync_directory(directory_path):
 
     except Exception as e:
         print(f"Warning: Could not force sync to disk: {e}")
-
 
 def save_document(doc: Doc, dest: str, disable_wandb: bool) -> None:
     """Serializes and saves spaCy Document."""
@@ -235,7 +249,6 @@ def save_document(doc: Doc, dest: str, disable_wandb: bool) -> None:
             except Exception as log_e:
                  print(f"Error logging save metrics to W&B: {log_e}")
 
-
 def split_text_on_full_stop(text: str, max_length: int) -> list:
     """
     Splits the text into chunks of at most max_length characters,
@@ -275,7 +288,6 @@ def split_text_on_full_stop(text: str, max_length: int) -> list:
 
     # Filter out empty strings that might result from consecutive delimiters
     return [seg for seg in segments if seg]
-
 
 def log_nlp_statistics(doc, step, doc_id=None, disable_wandb=False):
     """Log NLP statistics for a document to wandb"""
@@ -342,7 +354,6 @@ def log_nlp_statistics(doc, step, doc_id=None, disable_wandb=False):
         except Exception as log_e:
             print(f"Error logging NLP stats error to W&B: {log_e}")
 
-
 def log_system_metrics(disable_wandb=False):
     """Log system resource usage metrics"""
     if disable_wandb: return
@@ -391,14 +402,14 @@ def log_system_metrics(disable_wandb=False):
          except Exception as log_e:
               print(f"Error logging system metrics error to W&B: {log_e}")
 
-
 def log_server_metrics(disable_wandb=False):
     """Enhanced logging for server environments"""
-    if disable_wandb or not numa: return # Skip if wandb disabled or numa not available
+    if disable_wandb or not numa: return # Skip if wandb disabled or numa not available/installed
+    # (Function unchanged)
     try:
         server_log = {}
         # Log NUMA-specific metrics
-        if numa and numa.available():
+        if numa: # We already checked for installation and availability at the start
             numa_stats = {}
             num_nodes = numa.num_configured_nodes()
             for node in range(num_nodes):
@@ -418,8 +429,6 @@ def log_server_metrics(disable_wandb=False):
         try:
             per_cpu_percent = psutil.cpu_percent(percpu=True, interval=None) # Non-blocking
             core_usage = {f"core_{i}": percent for i, percent in enumerate(per_cpu_percent)}
-            # Limit logged cores if there are too many? e.g. only log first 64?
-            # core_usage = {f"core_{i}": percent for i, percent in enumerate(per_cpu_percent[:64])}
             if core_usage:
                 server_log["core_usage"] = core_usage
         except Exception as cpu_e:
@@ -435,9 +444,9 @@ def log_server_metrics(disable_wandb=False):
         except Exception as log_e:
              print(f"Error logging server metrics error to W&B: {log_e}")
 
-
 def manage_memory():
     """Periodically clean up memory to prevent leaks on long-running jobs"""
+    # (Function unchanged)
     try:
         collected = gc.collect()
         print(f"Garbage Collector: Freed {collected} objects.")
@@ -448,13 +457,16 @@ def manage_memory():
         print(f"Error during memory management: {e}")
 
 
+# --- Document Processing Function ---
+
 def process_document(text: str, nlp: Language, dest: str, doc_id: str = None, disable_wandb: bool = False) -> Tuple[bool, str, float, Dict]:
-    """Turns text into a spaCy document, optimized for high-core-count systems.
-       Uses nlp.pipe internally for parallelism within the worker process.
+    """Turns text into a spaCy document. Uses nlp.pipe internally with
+       configured N_PROCESS_PIPE and BATCH_SIZE_PIPE.
 
     Returns:
         Tuple containing (success status, error message if any, processing time, metrics dict)
     """
+    # (Function mostly unchanged, but nlp.pipe call is the key difference)
     metrics = {
         "doc_length": len(text),
         "had_to_split": len(text) > MAX_LENGTH,
@@ -462,21 +474,17 @@ def process_document(text: str, nlp: Language, dest: str, doc_id: str = None, di
     start_time = time.time()
 
     try:
-        # TORCH_THREADS should be set per process (done in worker)
-        # torch.set_num_threads(SYSTEM_CONFIG["TORCH_THREADS"]) # Set in worker instead
-
         # Track memory usage within this specific document processing call if needed
         # peak_memory_before = psutil.Process().memory_info().rss / (1024 * 1024)
 
         segment_size = MAX_LENGTH # Default segment size
         if len(text) > MAX_LENGTH:
-            # Use smaller segments for more parallelism on high-core machines
-            # Decision based on global config, execution happens here.
+            # Splitting logic remains the same, based on MAX_LENGTH
             segment_size = MAX_LENGTH // 2 if SYSTEM_CONFIG["CPU_COUNT"] > 32 else MAX_LENGTH
             texts = split_text_on_full_stop(text, segment_size)
             metrics["num_segments"] = len(texts)
             metrics["avg_segment_length"] = sum(len(t) for t in texts) / len(texts) if texts else 0
-            metrics["segment_size_used"] = segment_size # Log the actual size used
+            metrics["segment_size_used"] = segment_size
 
             if not disable_wandb:
                  try:
@@ -490,45 +498,42 @@ def process_document(text: str, nlp: Language, dest: str, doc_id: str = None, di
             metrics["num_segments"] = 1
             metrics["avg_segment_length"] = len(text)
 
-        # Use nlp.pipe() to process texts using configured parallelism within this worker
+        # --- CRITICAL CHANGE HERE ---
+        # Use nlp.pipe() with the *reduced* N_PROCESS_PIPE and BATCH_SIZE_PIPE
         pipe_start_time = time.time()
-        # N_PROCESS and BATCH_SIZE are from the global SYSTEM_CONFIG
-        docs = list(nlp.pipe(texts, n_process=N_PROCESS, batch_size=BATCH_SIZE))
+        docs = list(nlp.pipe(texts, n_process=N_PROCESS_PIPE, batch_size=BATCH_SIZE_PIPE))
         pipe_time = time.time() - pipe_start_time
         metrics["pipe_processing_time"] = pipe_time
-
-        # Track memory after processing
-        # peak_memory_after = psutil.Process().memory_info().rss / (1024 * 1024)
-        # metrics["memory_usage_mb"] = peak_memory_after - peak_memory_before
+        # --------------------------
 
         # Combine the processed segments back into a single document
+        # (Combine logic unchanged)
         combine_start_time = time.time()
         if len(docs) > 1:
             doc = Doc.from_docs(docs)
         elif len(docs) == 1:
             doc = docs[0]
         else:
-            # Handle case where splitting resulted in no processable segments
-            # Create an empty doc
-            vocab = nlp.vocab # Get vocab from the nlp object
+            vocab = nlp.vocab
             doc = Doc(vocab)
             print(f"Warning: No segments processed for doc_id {doc_id}, creating empty Doc.")
         combine_time = time.time() - combine_start_time
         metrics["doc_combine_time"] = combine_time
 
         # Collect document statistics
+        # (Stats collection unchanged)
         metrics["token_count"] = len(doc)
         metrics["entity_count"] = len(doc.ents)
         try:
-            # Sentence counting can fail on empty or unusual docs
             metrics["sentence_count"] = len(list(doc.sents)) if len(doc) > 0 else 0
         except Exception as sent_e:
             print(f"Warning: Could not count sentences for {doc_id}: {sent_e}")
             metrics["sentence_count"] = 0
 
         # Save document
+        # (Save logic unchanged)
         save_start_time = time.time()
-        save_document(doc, dest=dest, disable_wandb=disable_wandb) # Pass wandb flag
+        save_document(doc, dest=dest, disable_wandb=disable_wandb)
         save_time = time.time() - save_start_time
         metrics["doc_save_time"] = save_time
 
@@ -536,23 +541,24 @@ def process_document(text: str, nlp: Language, dest: str, doc_id: str = None, di
         metrics["total_processing_time"] = processing_time
 
         return True, "", processing_time, metrics
+
     except Exception as e:
+        # (Error handling unchanged)
         error_message = f"Error in process_document for {doc_id}: {str(e)}"
-        print(error_message) # Print error for immediate visibility
+        print(error_message)
         if not disable_wandb:
              try:
                  wandb.log({"processing_errors": wandb.Table(
-                     data=[[doc_id, dest, str(e)]], # Use original error for logging
+                     data=[[doc_id, dest, str(e)]],
                      columns=["Document ID", "Document Path", "Error Message"]
                  )})
              except Exception as log_e: print(f"Error logging processing error: {log_e}")
-        # Return metrics gathered so far, even on failure
         metrics["total_processing_time"] = time.time() - start_time
         return False, str(e), metrics.get("total_processing_time", 0.0), metrics
 
 
 # --- Worker Function for ProcessPoolExecutor ---
-
+# (process_batch function remains unchanged from previous version - it correctly passes SYSTEM_CONFIG)
 def process_batch(batch_paths_ids_dests, nlp_model_name, system_config, disable_wandb):
     """Worker function to process a batch of documents."""
     worker_results = []
@@ -561,18 +567,17 @@ def process_batch(batch_paths_ids_dests, nlp_model_name, system_config, disable_
     print(f"[Worker {pid}] Loading model '{nlp_model_name}'...")
 
     try:
-        # Set PyTorch threads for this worker process
+        # Set PyTorch threads for this worker process using the passed config
         torch.set_num_threads(system_config["TORCH_THREADS"])
         print(f"[Worker {pid}] Set torch threads to {system_config['TORCH_THREADS']}")
 
         # Load model in each worker process
         worker_nlp = spacy.load(nlp_model_name)
-        worker_nlp.max_length = system_config["MAX_LENGTH"]
+        worker_nlp.max_length = system_config["MAX_LENGTH"] # Use max_length from config
         print(f"[Worker {pid}] Model loaded. Max length: {worker_nlp.max_length}")
 
     except Exception as load_e:
         print(f"FATAL ERROR in worker {pid}: Could not load model {nlp_model_name}: {load_e}")
-        # Return failure for all items in this batch
         error_msg = f"Worker {pid} failed to load model: {load_e}"
         for _, doc_id, _ in batch_paths_ids_dests:
              worker_results.append((doc_id, False, error_msg, 0.0, {"doc_length": 0}))
@@ -587,38 +592,36 @@ def process_batch(batch_paths_ids_dests, nlp_model_name, system_config, disable_
                 text = f.read()
             if not text:
                  print(f"[Worker {pid}] Warning: Document {doc_id} ({src_path}) is empty.")
-                 # Process empty text to create an empty .spacy file
-                 # Fallthrough to process_document which handles empty text
 
             # Process the document using the main function
+            # It will use N_PROCESS_PIPE and BATCH_SIZE_PIPE via globals set from system_config
             success, error, proc_time, metrics = process_document(
-                text if text is not None else "", # Ensure text is not None
+                text if text is not None else "",
                 worker_nlp,
                 dest_path,
                 doc_id,
                 disable_wandb=disable_wandb
             )
             worker_results.append((doc_id, success, error, proc_time, metrics))
-            # Optional: print progress within worker
-            # if (i + 1) % 10 == 0:
-            #    print(f"[Worker {pid}] Processed {i+1}/{len(batch_paths_ids_dests)} in batch.")
 
         except FileNotFoundError:
              error_msg = f"File not found: {src_path}"
              print(f"[Worker {pid}] ERROR: {error_msg}")
-             worker_results.append((doc_id, False, error_msg, 0.0, {"doc_length": -1})) # Indicate file not found
+             worker_results.append((doc_id, False, error_msg, 0.0, {"doc_length": -1}))
         except Exception as read_e:
              error_msg = f"File read error for {src_path}: {read_e}"
              print(f"[Worker {pid}] ERROR: {error_msg}")
-             # Pass metrics dict even on read failure, length might be unknown
              worker_results.append((doc_id, False, error_msg, 0.0, {"doc_length": 0}))
 
     print(f"[Worker {pid}] Finished processing batch.")
+    # Explicitly delete large objects before worker potentially exits
+    del worker_nlp
+    gc.collect()
     return worker_results
 
 
 # --- CLI Parser ---
-
+# (create_parser unchanged)
 def create_parser() -> argparse.ArgumentParser:
     """Creates parser for the CLI."""
     parser = argparse.ArgumentParser(
@@ -651,14 +654,17 @@ def main():
     )
 
     # Creating destination directory
+    # (Unchanged)
     dest_path_obj = Path(args.dest)
     print(f"Creating destination directory ({args.dest})")
     dest_path_obj.mkdir(exist_ok=True, parents=True)
 
     # Generate a descriptive run name if none provided
+    # (Unchanged)
     run_name = args.run_name or f"corpus-processing-{args.model}-{time.strftime('%Y%m%d-%H%M%S')}"
 
     # Initialize wandb if not disabled
+    # (Unchanged, logs SYSTEM_CONFIG which now includes N_PROCESS_PIPE etc.)
     if not args.disable_wandb:
         print(f"Initializing wandb with run name: {run_name}")
         try:
@@ -668,40 +674,38 @@ def main():
                 name=run_name,
                 tags=["corpus-processing", args.model, "batch-mode"]
             )
-            # Log system configuration and arguments
-            wandb.config.update(vars(args)) # Log command line args
+            wandb.config.update(vars(args))
             wandb.config.update({
-                "system_config": SYSTEM_CONFIG, # Log the determined config
-                "max_length": MAX_LENGTH, # Redundant but explicit
-                "n_process_worker": N_PROCESS,
-                "batch_size_worker": BATCH_SIZE,
+                "system_config": SYSTEM_CONFIG,
+                "max_length": MAX_LENGTH,
+                "n_process_pipe": N_PROCESS_PIPE, # Log the pipe process count
+                "batch_size_pipe": BATCH_SIZE_PIPE, # Log the pipe batch size
                 "device": "cpu",
             })
         except Exception as wandb_e:
              print(f"FATAL: Failed to initialize WandB: {wandb_e}")
-             args.disable_wandb = True # Force disable if init fails
+             args.disable_wandb = True
              print("WandB logging has been disabled.")
     else:
         print("Weights & Biases logging disabled")
 
     # --- NUMA Setup ---
+    # (Unchanged)
     numa_enabled_runtime = False
-    if SYSTEM_CONFIG.get("NUMA_NODES", 1) > 1:
+    if SYSTEM_CONFIG.get("NUMA_NODES", 1) > 1 and numa: # Check numa is available
         numa_enabled_runtime = set_numa_awareness()
         print(f"NUMA awareness runtime status: {'Enabled' if numa_enabled_runtime else 'Not available/active'}")
         if not args.disable_wandb:
              wandb.config.update({"numa_enabled_runtime": numa_enabled_runtime})
 
     # --- Model Loading (Test Load Only) ---
-    # Actual model loading happens in worker processes
+    # (Unchanged)
     print(f"Testing load of NLP model: {args.model}")
     start_time_model_load = time.time()
     try:
-        # Load briefly to check availability and log pipeline
         temp_nlp = spacy.load(args.model)
         model_load_time = time.time() - start_time_model_load
         print(f"Model test load successful in {model_load_time:.2f} seconds")
-
         if not args.disable_wandb:
             wandb.log({"model_load_time_seconds": model_load_time})
             pipeline_components = [{"name": name, "type": str(type(component))}
@@ -710,43 +714,34 @@ def main():
                 data=[[comp["name"], comp["type"]] for comp in pipeline_components],
                 columns=["Component", "Type"]
             )})
-        del temp_nlp # Release memory
+        del temp_nlp
         gc.collect()
     except Exception as e:
         error_message = f"Failed to test load model: {str(e)}. Workers might fail."
         print(f"ERROR: {error_message}")
         if not args.disable_wandb:
             wandb.log({"critical_errors": wandb.Table(
-                data=[["Model Test Loading", error_message]],
-                columns=["Stage", "Error"]
-            )})
-        # Decide whether to exit or continue (workers might still succeed if it was transient)
-        # return # Exit if model load test fails
+                data=[["Model Test Loading", error_message]], columns=["Stage", "Error"] )})
 
     # --- Index Loading ---
+    # (Unchanged)
     print(f"Loading index of source files from {args.src_index}")
     try:
-        parsed_index = pd.read_csv(args.src_index) # index_col=0 removed assuming standard CSV
-        # Check required columns exist
+        parsed_index = pd.read_csv(args.src_index)
         if 'document_id' not in parsed_index.columns or 'dest_path' not in parsed_index.columns:
              raise ValueError("Index CSV must contain 'document_id' and 'dest_path' columns.")
-        parsed_index['document_id'] = parsed_index['document_id'].astype(str) # Ensure ID is string
+        parsed_index['document_id'] = parsed_index['document_id'].astype(str)
         n_total_in_index = len(parsed_index.index)
         print(f"Loaded index with {n_total_in_index} documents")
-
-        if not args.disable_wandb:
-            wandb.log({"total_documents_in_index": n_total_in_index})
+        if not args.disable_wandb: wandb.log({"total_documents_in_index": n_total_in_index})
     except Exception as e:
         error_message = f"Failed to load or validate index '{args.src_index}': {str(e)}"
         print(f"CRITICAL ERROR: {error_message}")
-        if not args.disable_wandb:
-            wandb.log({"critical_errors": wandb.Table(
-                data=[["Index Loading", error_message]],
-                columns=["Stage", "Error"]
-            )})
-        return # Cannot proceed without index
+        if not args.disable_wandb: wandb.log({"critical_errors": wandb.Table( data=[["Index Loading", error_message]], columns=["Stage", "Error"] )})
+        return
 
     # --- Filter Processed Files ---
+    # (Unchanged)
     print(f"Checking for already processed files in {args.dest}...")
     done_ids = get_done_ids(args.dest)
     n_done = len(done_ids)
@@ -757,30 +752,24 @@ def main():
         parsed_index = parsed_index[~done_filter]
     else:
         print("No previously processed files found matching the index.")
-
     n_left = len(parsed_index.index)
     if n_left == 0:
         print("No documents left to process.")
         if not args.disable_wandb: wandb.finish()
         return
-
     print(f"Documents to process: {n_left}")
     if not args.disable_wandb:
-        wandb.log({
-            "documents_to_process": n_left,
-            "documents_already_processed": n_done, # Total found on disk
-            "initial_progress": Plotly(progress_piechart(n_done, n_left + n_done)) # Pie based on index count + disk count
-        })
+        wandb.log({ "documents_to_process": n_left, "documents_already_processed": n_done,
+                    "initial_progress": Plotly(progress_piechart(n_done, n_left + n_done)) })
 
     # --- Prepare Batches ---
+    # (Unchanged)
     print(f"Preparing data batches (batch size: {args.batch_items})...")
-    # Each item: (source_file_path, document_id, destination_spacy_path)
     doc_data = list(zip(
-        parsed_index.dest_path, # Source paths from index column named 'dest_path'
+        parsed_index.dest_path,
         parsed_index.document_id,
         parsed_index.document_id.map(lambda doc_id: str(dest_path_obj / f"{doc_id}.spacy"))
     ))
-
     num_batches = (n_left + args.batch_items - 1) // args.batch_items
     data_batches = []
     for i in range(0, n_left, args.batch_items):
@@ -789,29 +778,23 @@ def main():
     print(f"Created {len(data_batches)} batches.")
 
     # --- Initialize Tracking ---
+    # (Unchanged)
     start_time_total = time.time()
     processed_chars_total = 0
     successful_docs = 0
     failed_docs = 0
-    total_processed_in_loop = 0 # Counter for docs processed in this run
-
-    # Create checkpoint directory
+    total_processed_in_loop = 0
     checkpoint_dir = dest_path_obj / "checkpoints"
     checkpoint_dir.mkdir(exist_ok=True, parents=True)
-
-    # Checkpoint dataframe for tracking processed documents in this run
     checkpoint_df = pd.DataFrame(columns=["document_id", "status", "processing_time", "timestamp"])
 
     # --- Main Processing Loop (Batch Mode) ---
+    # (Logic for handling results and logging largely unchanged)
     print(f"Starting processing using {SYSTEM_CONFIG['NUMA_NODES']} worker processes...")
-    # Progress bar for batches
     batch_pbar = tqdm(total=len(data_batches), desc="Processing Batches", unit="batch")
-    # Progress bar for documents
     doc_pbar = tqdm(total=n_left, desc="Processed Documents", unit="doc")
 
     with ProcessPoolExecutor(max_workers=SYSTEM_CONFIG["NUMA_NODES"]) as executor:
-        # Submit all batches
-        # Pass necessary config items explicitly to avoid reliance on potentially non-picklable globals
         futures = {
              executor.submit(process_batch, batch, args.model, SYSTEM_CONFIG, args.disable_wandb): batch_idx
              for batch_idx, batch in enumerate(data_batches)
@@ -820,36 +803,29 @@ def main():
         for future in as_completed(futures):
             batch_idx = futures[future]
             try:
-                batch_results = future.result() # List of tuples: (doc_id, success, error, time, metrics)
+                batch_results = future.result()
             except Exception as e:
-                # Handle errors at the batch level (e.g., worker crash)
+                # Handle errors at the batch level (e.g., worker crash like before)
                 print(f"CRITICAL ERROR: Processing batch {batch_idx} failed entirely: {e}")
-                # Estimate failed docs and update progress - difficult, depends how many were processed before crash
-                # For simplicity, log the batch error and update doc progress bar minimally
                 failed_count_in_batch = len(data_batches[batch_idx])
                 failed_docs += failed_count_in_batch
-                total_processed_in_loop += failed_count_in_batch # Count them as 'processed' (attempted)
+                total_processed_in_loop += failed_count_in_batch
                 doc_pbar.update(failed_count_in_batch)
                 if not args.disable_wandb:
                    try: wandb.log({"batch_processing_error": str(e)})
                    except Exception as log_e: print(f"Error logging batch error: {log_e}")
-                continue # Skip processing results for this failed batch
+                continue
 
             # --- Process results from the completed batch ---
-            batch_start_index = batch_idx * args.batch_items # Estimate start index for logging steps
-
+            # (Result processing logic remains the same...)
+            batch_start_index = batch_idx * args.batch_items
             for i, (doc_id, success, error_message, processing_time, metrics) in enumerate(batch_results):
-                doc_index_in_run = total_processed_in_loop # Index relative to start of this run (0 to n_left-1)
-                # For logging steps, use global index (includes previously done)
+                doc_index_in_run = total_processed_in_loop
                 current_doc_global_index = n_done + doc_index_in_run
-
-                # Update overall counters
                 total_processed_in_loop += 1
                 doc_length = metrics.get("doc_length", 0)
-                if doc_length > 0: # Only count chars if file was read
-                    processed_chars_total += doc_length
+                if doc_length > 0: processed_chars_total += doc_length
 
-                # Update success/failure counts and status
                 if success:
                     successful_docs += 1
                     status = "success"
@@ -857,19 +833,13 @@ def main():
                     failed_docs += 1
                     status = "failed"
                     if not args.disable_wandb:
-                        # Log specific failure
                         try:
                             wandb.log({"failed_documents": wandb.Table(
-                                data=[[doc_id, error_message]],
-                                columns=["Document ID", "Error"]
-                            )})
+                                data=[[doc_id, error_message]], columns=["Document ID", "Error"] )})
                         except Exception as log_e: print(f"Error logging failed doc table: {log_e}")
 
-                # Add to checkpoint dataframe (use concat for efficiency)
-                new_row = pd.DataFrame([{
-                    "document_id": doc_id, "status": status,
-                    "processing_time": processing_time, "timestamp": time.time()
-                }])
+                new_row = pd.DataFrame([{ "document_id": doc_id, "status": status,
+                    "processing_time": processing_time, "timestamp": time.time() }])
                 checkpoint_df = pd.concat([checkpoint_df, new_row], ignore_index=True)
 
                 # --- Logging ---
@@ -877,75 +847,45 @@ def main():
                     elapsed_time = time.time() - start_time_total
                     docs_per_second = total_processed_in_loop / elapsed_time if elapsed_time > 0 else 0
                     chars_per_second = processed_chars_total / elapsed_time if elapsed_time > 0 else 0
-                    estimated_remaining_time = (elapsed_time / total_processed_in_loop) * (n_left - total_processed_in_loop) if total_processed_in_loop > 0 else 0
-
+                    est_rem_time = (elapsed_time / total_processed_in_loop) * (n_left - total_processed_in_loop) if total_processed_in_loop > 0 else 0
                     log_data = {
-                        "n_processed_total": current_doc_global_index, # Global count
-                        "n_processed_this_run": total_processed_in_loop, # Count for this run
+                        "n_processed_total": current_doc_global_index, "n_processed_this_run": total_processed_in_loop,
                         "progress_percent": (current_doc_global_index / (n_left + n_done)) * 100 if (n_left + n_done) > 0 else 0,
-                        # "progress_pie": Plotly(progress_piechart(current_doc_global_index, n_left + n_done)), # Plotly can be slow, log less often?
-                        "doc_length": doc_length,
-                        "processing_time_seconds": processing_time,
+                        "doc_length": doc_length, "processing_time_seconds": processing_time,
                         "processing_speed_chars_per_sec": doc_length / processing_time if processing_time > 0 else 0,
-                        "cumulative_successful_docs": successful_docs,
-                        "cumulative_failed_docs": failed_docs,
-                        "elapsed_time_minutes": elapsed_time / 60,
-                        "avg_docs_per_second": docs_per_second,
-                        "avg_chars_per_second": chars_per_second,
-                        "estimated_remaining_time_minutes": estimated_remaining_time / 60,
-                        **metrics # Include metrics from process_document
+                        "cumulative_successful_docs": successful_docs, "cumulative_failed_docs": failed_docs,
+                        "elapsed_time_minutes": elapsed_time / 60, "avg_docs_per_second": docs_per_second,
+                        "avg_chars_per_second": chars_per_second, "estimated_remaining_time_minutes": est_rem_time / 60,
+                        **metrics
                     }
-                    # Only log pie chart occasionally
                     if total_processed_in_loop % 100 == 0 or total_processed_in_loop == n_left:
                         log_data["progress_pie"] = Plotly(progress_piechart(current_doc_global_index, n_left + n_done))
-
                     try:
-                        wandb.log(log_data) # Use default step increment or specify step=current_doc_global_index
+                        wandb.log(log_data)
                     except Exception as log_e: print(f"Error logging W&B data: {log_e}")
 
-                # --- Periodic Tasks (Checkpointing, System Metrics, Memory Management) ---
+                # --- Periodic Tasks ---
                 if total_processed_in_loop % args.checkpoint_interval == 0 and total_processed_in_loop > 0:
                     checkpoint_path = checkpoint_dir / f"checkpoint_{current_doc_global_index}.csv"
                     try:
                         checkpoint_df.to_csv(checkpoint_path, index=False)
                         print(f"\nSaved checkpoint ({len(checkpoint_df)} rows) at {checkpoint_path}")
                         if not args.disable_wandb:
-                            # Log artifact
                             checkpoint_artifact = wandb.Artifact(f"checkpoint_{current_doc_global_index}", type="checkpoint")
                             checkpoint_artifact.add_file(str(checkpoint_path))
                             wandb.log_artifact(checkpoint_artifact)
-                    except Exception as cp_e:
-                         print(f"\nError saving checkpoint: {cp_e}")
+                    except Exception as cp_e: print(f"\nError saving checkpoint: {cp_e}")
 
                 if total_processed_in_loop % args.sample_interval == 0 and total_processed_in_loop > 0:
-                    # Log system and server metrics
                     print(f"\nLogging system/server metrics at doc {total_processed_in_loop}...")
                     log_system_metrics(args.disable_wandb)
-                    log_server_metrics(args.disable_wandb) # Logs NUMA/core stats if available
+                    log_server_metrics(args.disable_wandb)
 
-                    # NLP stats logging requires re-processing or passing Doc object.
-                    # Commented out for batch mode efficiency.
-                    # if success and text is not None: # Need text
-                    #     try:
-                    #         # Re-process a sample for stats (might be slow)
-                    #         print(f"Logging NLP stats for sample of doc {doc_id}...")
-                    #         temp_nlp_main = spacy.load(args.model) # Load model in main process just for this
-                    #         sample_text = text[:min(len(text), MAX_LENGTH)]
-                    #         sample_doc = temp_nlp_main(sample_text)
-                    #         log_nlp_statistics(sample_doc, current_doc_global_index, doc_id, args.disable_wandb)
-                    #         del temp_nlp_main # cleanup
-                    #         gc.collect()
-                    #     except Exception as e:
-                    #          print(f"\nError logging NLP stats: {e}")
-                    #          if not args.disable_wandb: wandb.log({"statistics_errors": str(e)})
-
-                # Memory Management Call (Suggestion 5) - run fairly often
-                if total_processed_in_loop % 100 == 0 and total_processed_in_loop > 0:
+                if total_processed_in_loop % 100 == 0 and total_processed_in_loop > 0: # Memory management frequency
                     print("\nRunning periodic memory management...")
                     manage_memory()
 
-                # Update document progress bar
-                doc_pbar.update(1)
+                doc_pbar.update(1) # Update doc progress bar here
 
             # Update batch progress bar after processing all results from a batch
             batch_pbar.update(1)
@@ -954,19 +894,16 @@ def main():
     doc_pbar.close()
     print("\nProcessing loop finished.")
 
+
     # --- Final Index and Checkpoint ---
+    # (Unchanged)
     print("Creating final index for processed documents...")
-    # Use the checkpoint_df which contains results from this run
     final_run_results = checkpoint_df[['document_id', 'status']].copy()
-    # Merge with the original subset of the index that was processed
     processed_subset_index = parsed_index[parsed_index['document_id'].isin(final_run_results['document_id'])].copy()
-    # Add source path back if needed, assuming 'dest_path' in parsed_index was the source
     final_index = pd.merge(processed_subset_index[['document_id', 'dest_path']], final_run_results, on='document_id', how='left')
     final_index.rename(columns={'dest_path': 'src_path', 'status': 'processing_status'}, inplace=True)
-    # Add the destination path column
     final_index['dest_path'] = final_index['document_id'].map(lambda doc_id: str(dest_path_obj / f"{doc_id}.spacy"))
-
-    index_path = dest_path_obj / "index_processed_run.csv" # Save index for this run specifically
+    index_path = dest_path_obj / "index_processed_run.csv"
     try:
         final_index.to_csv(index_path, index=False)
         print(f"Saved index for this run ({len(final_index)} entries) to {index_path}")
@@ -974,11 +911,8 @@ def main():
             index_artifact = wandb.Artifact(f"processed_corpus_index_{run_name}", type="dataset_index")
             index_artifact.add_file(str(index_path))
             wandb.log_artifact(index_artifact)
-    except Exception as idx_e:
-        print(f"Error saving final index: {idx_e}")
+    except Exception as idx_e: print(f"Error saving final index: {idx_e}")
 
-
-    # Save final checkpoint (contains all results from this run)
     final_checkpoint_path = checkpoint_dir / "final_checkpoint_run.csv"
     try:
         checkpoint_df.to_csv(final_checkpoint_path, index=False)
@@ -987,12 +921,16 @@ def main():
             final_checkpoint_artifact = wandb.Artifact(f"final_checkpoint_{run_name}", type="checkpoint")
             final_checkpoint_artifact.add_file(str(final_checkpoint_path))
             wandb.log_artifact(final_checkpoint_artifact)
-    except Exception as fcp_e:
-        print(f"Error saving final checkpoint: {fcp_e}")
+    except Exception as fcp_e: print(f"Error saving final checkpoint: {fcp_e}")
+
 
     # --- Summary ---
     processing_time_total = time.time() - start_time_total
-    actual_processed_count = successful_docs + failed_docs # Should equal total_processed_in_loop
+    actual_processed_count = successful_docs + failed_docs
+
+    # --- W&B Logging FIX ---
+    success_rate_float = (successful_docs / actual_processed_count * 100) if actual_processed_count > 0 else 0.0
+    success_rate_str = f"{success_rate_float:.2f}%" # Keep string format for printout
 
     summary_data = [
         ["Total Documents in Index", n_total_in_index],
@@ -1000,34 +938,42 @@ def main():
         ["Documents Attempted in This Run", actual_processed_count],
         ["Successfully Processed (this run)", successful_docs],
         ["Failed (this run)", failed_docs],
-        ["Success Rate (this run)", f"{(successful_docs / actual_processed_count * 100):.2f}%" if actual_processed_count > 0 else "N/A"],
-        ["Total Processing Time (min)", f"{processing_time_total / 60:.2f}"],
-        ["Avg Time per Document (sec, this run)", f"{processing_time_total / actual_processed_count:.2f}" if actual_processed_count > 0 else "N/A"],
-        ["Avg Processing Speed (chars/sec, this run)", f"{processed_chars_total / processing_time_total:.2f}" if processing_time_total > 0 else "N/A"],
+        ["Success Rate (this run)", success_rate_float], # Use float for W&B Table
+        ["Total Processing Time (min)", processing_time_total / 60],
+        ["Avg Time per Document (sec, this run)", (processing_time_total / actual_processed_count) if actual_processed_count > 0 else 0.0],
+        ["Avg Processing Speed (chars/sec, this run)", (processed_chars_total / processing_time_total) if processing_time_total > 0 else 0.0],
         ["Total Characters Processed (this run)", processed_chars_total],
         ["Batch Size (Items per Worker Job)", args.batch_items],
         ["Worker Processes (NUMA Nodes)", SYSTEM_CONFIG['NUMA_NODES']],
-        ["spaCy Processes per Worker (nlp.pipe)", N_PROCESS],
-        ["spaCy Batch Size per Worker (nlp.pipe)", BATCH_SIZE],
+        ["spaCy Processes per Worker (nlp.pipe)", N_PROCESS_PIPE], # Use correct name
+        ["spaCy Batch Size per Worker (nlp.pipe)", BATCH_SIZE_PIPE], # Use correct name
         ["Max Document Length (chars)", MAX_LENGTH],
     ]
 
-    # Print summary
+    # Print summary using the string format for success rate
     print("\n===== Processing Summary =====")
     for name, value in summary_data:
-        print(f"{name}: {value}")
+        if name == "Success Rate (this run)":
+             print(f"{name}: {success_rate_str}") # Print formatted string
+        elif isinstance(value, float):
+             print(f"{name}: {value:.2f}") # Format floats for printing
+        else:
+             print(f"{name}: {value}")
 
-    # Log summary to W&B
+
+    # Log summary to W&B using the float for success rate
     if not args.disable_wandb:
         try:
+            # Ensure data types match W&B expectations (Numbers for numeric fields)
+            summary_table_data = [[item[0], item[1]] for item in summary_data]
             wandb.log({"final_summary": wandb.Table(
-                data=summary_data,
+                data=summary_table_data,
                 columns=["Metric", "Value"]
             )})
             wandb.finish()
             print("\nWandB run finished.")
         except Exception as log_e:
-            print(f"Error logging final summary / finishing WandB: {log_e}")
+            print(f"Error logging final summary / finishing WandB: {log_e}") # Original error message was helpful
 
 if __name__ == "__main__":
     main()
