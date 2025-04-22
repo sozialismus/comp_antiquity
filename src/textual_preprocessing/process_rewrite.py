@@ -389,8 +389,8 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test_src_path", type=Path, default=None, help="Optional: Direct path to source text file for test mode.") # Use type=Path
     # --------------------------
     # W&B
-    parser.add_argument("--wandb_user", type=str, default=os.getenv("WANDB_ENTITY"), help="W&B user/entity (or WANDB_ENTITY env var).")
-    parser.add_argument("--wandb_project", type=str, default=os.getenv("WANDB_PROJECT", "corpus-processing"), help="W&B project (or WANDB_PROJECT env var).")
+    parser.add_argument("--wandb_user", type=str, default="sozialismus_au", help="W&B user/entity (or WANDB_ENTITY env var).")
+    parser.add_argument("--wandb_project", type=str, default="model-tracking", help="W&B project (or WANDB_PROJECT env var).")
     parser.add_argument("--run_name", type=str, default=None, help="Optional W&B run name (default: auto-generated).")
     parser.add_argument("--disable_wandb", action="store_true", help="Disable W&B logging.")
 
