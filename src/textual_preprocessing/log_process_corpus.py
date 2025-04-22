@@ -52,27 +52,25 @@ except Exception as e:
 
 # --- System Resource Configuration ---
 
+
 def configure_system_resources():
     """Configure system resources optimized for high-core-count Xeon servers"""
     cpu_count = os.cpu_count()
     available_memory_gb = psutil.virtual_memory().available / (1024 ** 3)
 
     # --- CRITICAL CHANGE HERE ---
-    # N_PROCESS_PIPE: Processes used by nlp.pipe *inside* each worker.
-    # Keep this LOW because we have ProcessPoolExecutor parallelism.
-    # Don't base it on total system cores directly. 2-4 is usually sufficient.
-    n_process_pipe = 4 # Reduced drastically from 32!
+    # N_PROCESS_PIPE: Set to 1. Eliminate nlp.pipe parallelism within workers.
+    n_process_pipe = 1 # <<< MOST IMPORTANT CHANGE
 
-    # BATCH_SIZE_PIPE: Batch size for nlp.pipe *inside* each worker.
-    # Can still be reasonably large.
-    batch_size_pipe = max(16, min(int(available_memory_gb * 3), 128)) # Keep original logic
+    # BATCH_SIZE_PIPE: Keep reasonable, but maybe slightly smaller?
+    batch_size_pipe = max(16, min(int(available_memory_gb * 2), 96)) # Slightly reduced max
 
-    # MAX_LENGTH: Original logic, increased cap
+    # MAX_LENGTH: Keep as before
     max_length = min(2 * 10**4, int(available_memory_gb * 8 * 10**3))
-    max_length = max(10000, min(max_length, 2 * 10**6)) # Sane range
+    max_length = max(10000, min(max_length, 2 * 10**6))
 
-    # NUMA_NODES: For ProcessPoolExecutor workers
-    numa_nodes = 2 # Defaulting based on prompt info (ideally detect this)
+    # NUMA_NODES: Keep as before
+    numa_nodes = 2
     if numa:
         try:
             num_nodes_detected = numa.num_configured_nodes()
@@ -82,29 +80,30 @@ def configure_system_resources():
         except Exception as e:
             print(f"Could not detect NUMA nodes via library, using default {numa_nodes}. Error: {e}")
 
-
-    # TORCH_THREADS: For PyTorch operations within each worker
-    torch_threads = max(4, cpu_count // (numa_nodes * 2)) # Distribute threads more evenly among workers
+    # TORCH_THREADS: Reduce significantly as inner parallelism is gone.
+    # Base it on cores available *per worker* (total cores / numa nodes)
+    # but don't go too high. Maybe 4-8 threads per worker.
+    cores_per_worker = cpu_count // numa_nodes if numa_nodes > 0 else cpu_count
+    torch_threads = max(2, min(8, cores_per_worker // 2)) # Reduced from 16
 
     print(f"System Config: CPU={cpu_count}, MemGB={available_memory_gb:.2f}, CoresPerPipe={n_process_pipe}, PipeBatch={batch_size_pipe}, MaxLen={max_length}, TorchThreads={torch_threads}, NUMANodes={numa_nodes}")
 
+    # Ensure keys match the rest of the script expects
     return {
         "MAX_LENGTH": max_length,
-        "N_PROCESS_PIPE": n_process_pipe,      # RENAMED for clarity
-        "BATCH_SIZE_PIPE": batch_size_pipe,    # RENAMED for clarity
+        "N_PROCESS_PIPE": n_process_pipe,
+        "BATCH_SIZE_PIPE": batch_size_pipe,
         "CPU_COUNT": cpu_count,
         "AVAILABLE_MEMORY_GB": available_memory_gb,
-        "TORCH_THREADS": torch_threads, # For workers
-        "NUMA_NODES": numa_nodes # For ProcessPoolExecutor
+        "TORCH_THREADS": torch_threads,
+        "NUMA_NODES": numa_nodes
     }
 
-# Get system-specific parameters
+# Rest of the SYSTEM_CONFIG setup remains the same, N_PROCESS_PIPE will be 1
 SYSTEM_CONFIG = configure_system_resources()
 MAX_LENGTH = SYSTEM_CONFIG["MAX_LENGTH"]
-# --- Adjusted Globals ---
-N_PROCESS_PIPE = SYSTEM_CONFIG["N_PROCESS_PIPE"]   # Use the new config value
-BATCH_SIZE_PIPE = SYSTEM_CONFIG["BATCH_SIZE_PIPE"] # Use the new config value
-# -----------------------
+N_PROCESS_PIPE = SYSTEM_CONFIG["N_PROCESS_PIPE"]   # Will be 1
+BATCH_SIZE_PIPE = SYSTEM_CONFIG["BATCH_SIZE_PIPE"]
 
 
 # --- NUMA Awareness Setup ---
@@ -575,6 +574,11 @@ def process_batch(batch_paths_ids_dests, nlp_model_name, system_config, disable_
     worker_results = []
     worker_nlp = None
     pid = os.getpid()
+    process = psutil.Process(pid) # Get process object for memory check
+
+    mem_before_load = process.memory_info().rss / (1024 * 1024)
+    print(f"[Worker {pid}] Memory before model load: {mem_before_load:.2f} MB")
+
     print(f"[Worker {pid}] Loading model '{nlp_model_name}'...")
 
     try:
@@ -585,16 +589,23 @@ def process_batch(batch_paths_ids_dests, nlp_model_name, system_config, disable_
         # Load model in each worker process
         worker_nlp = spacy.load(nlp_model_name)
         worker_nlp.max_length = system_config["MAX_LENGTH"] # Use max_length from config
-        print(f"[Worker {pid}] Model loaded. Max length: {worker_nlp.max_length}")
+
+        mem_after_load = process.memory_info().rss / (1024 * 1024)
+        print(f"[Worker {pid}] Model loaded. Max length: {worker_nlp.max_length}. Memory after load: {mem_after_load:.2f} MB")
 
     except Exception as load_e:
         print(f"FATAL ERROR in worker {pid}: Could not load model {nlp_model_name}: {load_e}")
         error_msg = f"Worker {pid} failed to load model: {load_e}"
         for _, doc_id, _ in batch_paths_ids_dests:
              worker_results.append((doc_id, False, error_msg, 0.0, {"doc_length": 0}))
-        return worker_results # Exit early if model load fails
+        return worker_results
 
     print(f"[Worker {pid}] Processing batch of {len(batch_paths_ids_dests)} documents...")
+    mem_before_batch = process.memory_info().rss / (1024 * 1024)
+    print(f"[Worker {pid}] Memory before processing batch: {mem_before_batch:.2f} MB")
+
+    batch_start_time = time.time() # Time the batch processing itself
+
     for i, (src_path, doc_id, dest_path) in enumerate(batch_paths_ids_dests):
         text = None
         try:
@@ -605,7 +616,7 @@ def process_batch(batch_paths_ids_dests, nlp_model_name, system_config, disable_
                  print(f"[Worker {pid}] Warning: Document {doc_id} ({src_path}) is empty.")
 
             # Process the document using the main function
-            # It will use N_PROCESS_PIPE and BATCH_SIZE_PIPE via globals set from system_config
+            # It will use N_PROCESS_PIPE=1 and BATCH_SIZE_PIPE via globals
             success, error, proc_time, metrics = process_document(
                 text if text is not None else "",
                 worker_nlp,
@@ -624,12 +635,17 @@ def process_batch(batch_paths_ids_dests, nlp_model_name, system_config, disable_
              print(f"[Worker {pid}] ERROR: {error_msg}")
              worker_results.append((doc_id, False, error_msg, 0.0, {"doc_length": 0}))
 
-    print(f"[Worker {pid}] Finished processing batch.")
+    batch_end_time = time.time()
+    mem_after_batch = process.memory_info().rss / (1024 * 1024)
+    print(f"[Worker {pid}] Finished processing batch. Time taken: {batch_end_time - batch_start_time:.2f}s. Memory after batch: {mem_after_batch:.2f} MB")
+
     # Explicitly delete large objects before worker potentially exits
     del worker_nlp
+    del text # Delete last text object
     gc.collect()
+    mem_after_gc = process.memory_info().rss / (1024 * 1024)
+    print(f"[Worker {pid}] Memory after GC: {mem_after_gc:.2f} MB")
     return worker_results
-
 
 # --- CLI Parser ---
 # (create_parser unchanged)
