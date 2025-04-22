@@ -2,6 +2,14 @@
 # initialize ucloud - clone repo and init conda envs - trying to get proiel_trf and ner_trf to function
 cd /work
 
+echo "Rebasing project"
+cd comp_antiquity/
+
+git fetch origin
+
+git rebase --continue
+
+cd /work
 
 # Ensure Miniconda is available
 if [ ! -d "$HOME/miniconda3" ]; then
@@ -41,9 +49,3 @@ conda deactivate
 
 conda info --envs
 
-echo "Rebasing project"
-cd comp_antiquity/
-
-git fetch origin
-
-git rebase --continue

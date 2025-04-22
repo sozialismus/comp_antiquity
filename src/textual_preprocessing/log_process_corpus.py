@@ -28,11 +28,11 @@ def configure_system_resources():
     
     # Implement the requested processor scaling logic:
     # - For systems with more than 8 cores: use 25% of cores
-    # - For systems with 8 or fewer cores: use 75% of cores
+    # - For systems with 8 or fewer cores: use 50% of cores
     if cpu_count > 8:
         n_process = max(1, int(cpu_count * 0.25))
     else:
-        n_process = max(1, int(cpu_count * 0.75))
+        n_process = max(1, int(cpu_count * 0.50))
     
     # Adaptive batch size and max length based on available memory
     batch_size = max(1, min(int(available_memory_gb * 2), 64))  # Scale batch size with memory
