@@ -389,7 +389,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test_src_path", type=Path, default=None, help="Optional: Direct path to source text file for test mode.") # Use type=Path
     # --------------------------
     # W&B
-    parser.add_argument("--wandb_user", type=str, default="sozialismus_au", help="W&B user/entity (or WANDB_ENTITY env var).")
+    parser.add_argument("--wandb_user", type=str, default="sozialismus-au", help="W&B user/entity (or WANDB_ENTITY env var).")
     parser.add_argument("--wandb_project", type=str, default="model-tracking", help="W&B project (or WANDB_PROJECT env var).")
     parser.add_argument("--run_name", type=str, default=None, help="Optional W&B run name (default: auto-generated).")
     parser.add_argument("--disable_wandb", action="store_true", help="Disable W&B logging.")
@@ -452,8 +452,13 @@ def main():
         sys.exit(1)
 
     # --- Torch Thread Setup ---
-    logging.info(f"Setting global PyTorch threads to: {config.torch_threads}")
-    torch.set_num_threads(config.torch_threads)
+    # >>> CRITICAL FIX - Set threads BEFORE model load <<<
+    # Setting to 1 is the recommended workaround for PyTorch/multiprocessing deadlocks
+    num_torch_threads_to_set = 1
+    logging.info(f"Setting global PyTorch threads to: {num_torch_threads_to_set} (Workaround for multiprocessing issues)")
+    torch.set_num_threads(num_torch_threads_to_set)
+    # Update config to reflect the actual setting (though model was loaded with 1)
+    config.torch_threads = num_torch_threads_to_set # Reflect the change in config display/logging
 
     # --- Initialize W&B ---
     if not config.disable_wandb:
