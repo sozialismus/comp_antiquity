@@ -2,6 +2,10 @@
 # initialize ucloud - clone repo and init conda envs - trying to get proiel_trf and ner_trf to function
 cd /work
 
+# move conda environment & comp_antiquity
+# mv /work/cleaning_texts/miniconda3 /work/
+cp -r /work/cleaning_texts/comp_antiquity /work/
+
 # Ensure Miniconda is available
 if [ ! -d "$HOME/miniconda3" ]; then
     echo "Miniconda not found, installing..."
@@ -11,6 +15,7 @@ if [ ! -d "$HOME/miniconda3" ]; then
 fi
 
 # Source conda environment so that 'conda' command is available.
+# eval "$(/work/miniconda3/bin/conda shell.bash hook)"
 eval "$(/work/miniconda3/bin/conda shell.bash hook)"
 
 conda init
@@ -40,4 +45,6 @@ conda deactivate
 
 conda info --envs
 
+# Keep the shell open
 tail -f /dev/null
+# exec bash
