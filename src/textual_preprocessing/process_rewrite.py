@@ -509,42 +509,90 @@ def main():
 
     # --- Main Processing Loop (Full Run) ---
     logging.info(f"Starting processing {n_left} documents...")
-    pbar=tqdm(zip(doc_filenames,texts_stream,doc_ids),total=n_left,desc="Processing Docs",unit="doc")
+    pbar = tqdm(zip(doc_filenames, texts_stream, doc_ids), total=n_left, desc="Processing Docs", unit="doc")
+
     try:
-        for doc_out_path,text,doc_id in pbar:
-            loop_start=time.time(); current_step=n_done+total_processed_in_loop+1
-            logging.info(f"Processing Doc ID: {doc_id} ({total_processed_in_loop+1}/{n_left})... Step: {current_step}")
-            success,metrics,final_doc=process_document(text,doc_id,doc_out_path,nlp,config); all_metrics.append(metrics)
-            if success and final_doc: last_successful_doc=final_doc
-            total_processed_in_loop+=1; doc_len=metrics.get("doc_length",0);
-            if doc_len>0: processed_chars_total+=doc_len
-            if success: successful_docs+=1
-            else: failed_docs+=1
-            loop_time=time.time()-loop_start
+        for doc_out_path, text, doc_id in pbar: # <<< doc_id is defined for this iteration
+            loop_start = time.time()
+            # Use 1-based index for step count? Let's use total processed + n_done for step
+            current_step = n_done + total_processed_in_loop + 1
+            logging.info(f"Processing Document ID: {doc_id} ({total_processed_in_loop + 1}/{n_left})... Step: {current_step}")
+
+            success, metrics, final_doc = process_document(
+                text, doc_id=doc_id, dest_path=doc_out_path, nlp=nlp, config=config
+            )
+            all_metrics.append(metrics)
+            if success and final_doc:
+                last_successful_doc = final_doc # Store last good doc object
+
+            # Update Counters
+            total_processed_in_loop += 1
+            doc_len = metrics.get("doc_length", 0)
+            if doc_len > 0: processed_chars_total += doc_len
+            if success: successful_docs += 1
+            else: failed_docs += 1
+
+            # Live Logging
+            loop_time = time.time() - loop_start
             if not config.disable_wandb and wandb.run:
-                elapsed=time.time()-start_time_total; docs_ps=total_processed_in_loop/elapsed if elapsed>0 else 0.0; chars_ps=processed_chars_total/elapsed if elapsed>0 else 0.0; est_rem_s=(elapsed/total_processed_in_loop)*(n_left-total_processed_in_loop) if total_processed_in_loop>0 else 0.0
-                log_data={"progress/n_total":current_step,"progress/n_this_run":total_processed_in_loop,"progress/percent":(current_step/(n_left+n_done))*100 if (n_left+n_done)>0 else 0.0,"progress/id":doc_id,"perf/len":metrics.get("doc_length",0),"perf/proc_sec":metrics.get("total_proc_time_sec",0.0),"perf/save_sec":metrics.get("save_time_sec",0.0),"perf/pipe_sec":metrics.get("pipe_time_sec",0.0),"perf/docs_ps":docs_ps,"perf/chars_ps":chars_ps,"time/elapsed_min":elapsed/60,"time/est_rem_min":est_rem_s/60,"stats/ok":successful_docs,"stats/fail":failed_docs,"stats/tokens":metrics.get("token_count",0),"stats/fsize_kb":metrics.get("file_size_kb",0.0),"perf/loop_sec":loop_time,}
-                if total_processed_in_loop%20==0 or total_processed_in_loop==n_left:
-                    try: log_data["progress/pie"]=Plotly(progress_piechart(current_step,n_left+n_done))
+                elapsed = time.time() - start_time_total
+                docs_ps = total_processed_in_loop / elapsed if elapsed > 0 else 0.0
+                chars_ps = processed_chars_total / elapsed if elapsed > 0 else 0.0
+                est_rem_s = (elapsed / total_processed_in_loop) * (n_left - total_processed_in_loop) if total_processed_in_loop > 0 else 0.0
+                log_data = {
+                    "progress/n_total": current_step, "progress/n_this_run": total_processed_in_loop,
+                    "progress/percent": (current_step / (n_left + n_done)) * 100 if (n_left + n_done) > 0 else 0.0,
+                    "progress/id": doc_id, "perf/len": metrics.get("doc_length", 0),
+                    "perf/proc_sec": metrics.get("total_proc_time_sec", 0.0), "perf/save_sec": metrics.get("save_time_sec", 0.0),
+                    "perf/pipe_sec": metrics.get("pipe_time_sec", 0.0), "perf/docs_ps": docs_ps,
+                    "perf/chars_ps": chars_ps, "time/elapsed_min": elapsed / 60,
+                    "time/est_rem_min": est_rem_s / 60, "stats/ok": successful_docs,
+                    "stats/fail": failed_docs, "stats/tokens": metrics.get("token_count", 0),
+                    "stats/fsize_kb": metrics.get("file_size_kb", 0.0), "perf/loop_sec": loop_time,
+                }
+                if total_processed_in_loop % 20 == 0 or total_processed_in_loop == n_left:
+                    try:
+                        log_data["progress/pie"] = Plotly(progress_piechart(current_step, n_left + n_done))
                     except Exception as plot_e: logging.warning(f"Pie chart failed: {plot_e}")
-                try: wandb.log(log_data,step=current_step)
-                except Exception as log_e: logging.warning(f"W&B log fail step {current_step}: {log_e}")
-            if total_processed_in_loop%config.checkpoint_interval==0 and total_processed_in_loop>0:
-                logging.info(f"[{total_processed_in_loop}] Saving checkpoint..."); cp_path=checkpoint_dir/f"checkpoint_{current_step}.csv"
                 try:
-                    pd.DataFrame(all_metrics).assign(timestamp=time.time()).to_csv(cp_path,index=False); logging.info(f"Checkpoint -> {cp_path}")
+                    wandb.log(log_data, step=current_step)
+                except Exception as log_e: logging.warning(f"W&B log fail step {current_step}: {log_e}")
+
+            # Periodic Tasks
+            if total_processed_in_loop % config.checkpoint_interval == 0 and total_processed_in_loop > 0:
+                logging.info(f"[{total_processed_in_loop}] Saving checkpoint...")
+                cp_path = checkpoint_dir / f"checkpoint_{current_step}.csv"
+                try:
+                    pd.DataFrame(all_metrics).assign(timestamp=time.time()).to_csv(cp_path, index=False)
+                    logging.info(f"Checkpoint -> {cp_path}")
                     if not config.disable_wandb and wandb.run:
-                        try: art=wandb.Artifact(f"checkpoint_{current_step}",type="checkpoint"); art.add_file(str(cp_path)); wandb.log_artifact(art)
+                        try:
+                            art = wandb.Artifact(f"checkpoint_{current_step}", type="checkpoint")
+                            art.add_file(str(cp_path)); wandb.log_artifact(art)
                         except Exception as log_e: logging.warning(f"Log artifact fail: {log_e}")
                 except Exception as cp_e: logging.error(f"Checkpoint save fail: {cp_e}")
-            if total_processed_in_loop%config.sample_interval==0 and total_processed_in_loop>0:
-                logging.info(f"[{total_processed_in_loop}] Logging detailed metrics..."); log_system_metrics(config,step=current_step)
-                if last_successful_doc: log_nlp_statistics(last_successful_doc,current_step,last_successful_doc._.get('doc_id','N/A'),config)
-                else: logging.info(f"[{total_processed_in_loop}] Skip NLP stats log.")
-            if total_processed_in_loop%(config.checkpoint_interval//2+1)==0 and total_processed_in_loop>0: manage_memory(total_processed_in_loop)
-            pbar.set_description(f"Last: {doc_id[:15]} ({metrics.get('total_proc_time_sec',0.0):.2f}s)")
-    except KeyboardInterrupt: logging.warning("\nInterrupted. Exiting loop.")
-    finally: pbar.close(); logging.info("Loop finished/interrupted.")
+
+            if total_processed_in_loop % config.sample_interval == 0 and total_processed_in_loop > 0:
+                logging.info(f"[{total_processed_in_loop}] Logging detailed metrics...")
+                log_system_metrics(config, step=current_step)
+                if last_successful_doc:
+                    # -------------------- FIX IS HERE --------------------
+                    # Use the 'doc_id' from the current loop iteration, not from the potentially old 'last_successful_doc'
+                    log_nlp_statistics(last_successful_doc, current_step, doc_id, config)
+                    # ----------------------------------------------------
+                else:
+                    logging.info(f"[{total_processed_in_loop}] Skip NLP stats log.")
+
+            if total_processed_in_loop % (config.checkpoint_interval // 2 + 1) == 0 and total_processed_in_loop > 0:
+                manage_memory(total_processed_in_loop)
+
+            pbar.set_description(f"Last: {doc_id[:15]} ({metrics.get('total_proc_time_sec', 0.0):.2f}s)")
+
+    except KeyboardInterrupt:
+        logging.warning("\nInterrupted. Exiting loop.")
+    finally:
+        pbar.close()
+        logging.info("Loop finished/interrupted.")
 
     # --- Final Index and Checkpoint ---
     # (Final save logic unchanged)
