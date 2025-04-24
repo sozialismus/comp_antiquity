@@ -32,11 +32,25 @@ from tqdm import tqdm
 
 # Import helper - exit if not found
 try:
+    # Assumes utils is a directory in the same parent folder as the script
+    # or utils is installed as a package, or PYTHONPATH is set.
     from utils.streams import stream_files
 except ImportError:
-    logging.error("Could not import stream_files from utils.streams.")
-    logging.error("Ensure utils/streams.py is accessible (e.g., in the same directory or PYTHONPATH).")
-    sys.exit(1)
+    # Provide a simple fallback if the utility is missing
+    def stream_files(paths: List[str]):
+        logging.info("Using fallback file streamer (reading files fully into memory one by one).")
+        for p_str in paths: # paths are strings from tolist()
+            p = Path(p_str) # Convert to Path for consistency
+            try:
+                if not p.is_file():
+                     logging.error(f"File not found in fallback streamer: {p}")
+                     yield "" # Yield empty string for missing file
+                     continue
+                with open(p, 'r', encoding='utf-8') as f:
+                    yield f.read()
+            except Exception as e:
+                logging.error(f"Error reading file {p} in fallback streamer: {e}")
+                yield "" # Yield empty string on other errors
 
 from wandb.data_types import Plotly
 
@@ -63,10 +77,11 @@ class RunConfig:
     batch_size: int = 64
     torch_threads: int = max(1, min(8, (os.cpu_count() or 1) // 2))
     # Execution Control
-    attributes_key: str = "full" # <<< Key to select attribute set
+    attributes_key: str = "full" # Key to select attribute set
     force_sync: bool = False
     sample_interval: int = 100
     checkpoint_interval: int = 500
+    skip_docs_over_len: Optional[int] = None # <<< ADDED: Max length to process (chars), skip if over
     test_doc_id: Optional[str] = None
     test_src_path: Optional[Path] = None
     # W&B
@@ -110,7 +125,6 @@ TOKEN_ATTRS_NER_ID_IDX = [ # NER + Token ID + Char Offset
 ]
 
 # --- Global variable to hold the selected attributes ---
-# This will be set in main() based on config
 SELECTED_TOKEN_ATTRS: List[str] = TOKEN_ATTRS_FULL # Default to full
 
 
@@ -171,7 +185,13 @@ def save_document(doc: Doc, dest_path: Path, config: RunConfig) -> Dict[str, Any
         doc_bin.to_disk(str(temp_dest))
         temp_dest.rename(dest_path)
         metrics["save_success"] = True
-        metrics["file_size_kb"] = dest_path.stat().st_size / 1024
+        # Handle potential race condition or file not existing immediately after rename
+        try:
+            metrics["file_size_kb"] = dest_path.stat().st_size / 1024
+        except FileNotFoundError:
+            logging.warning(f"Could not get file size for {dest_path} immediately after rename.")
+            metrics["file_size_kb"] = 0.0
+
         if config.force_sync: force_sync_directory(dest_path.parent)
     except Exception as e:
         error_msg = f"Failed to save DocBin to {dest_path}: {e}"
@@ -181,7 +201,7 @@ def save_document(doc: Doc, dest_path: Path, config: RunConfig) -> Dict[str, Any
             except OSError: pass
         if not config.disable_wandb and wandb.run:
             try:
-                # Log save errors without step, as they aren't part of the main sequence
+                # Log save errors without step
                 wandb.log({"errors/document_save": wandb.Table(data=[[str(dest_path), str(e)]], columns=["Path", "Error Message"])})
             except Exception as log_e: logging.warning(f"Failed to log save error to W&B: {log_e}")
     finally:
@@ -224,7 +244,7 @@ def log_system_metrics(config: RunConfig, step: int):
         wandb.log(log_payload, step=step)
     except Exception as e: logging.warning(f"Could not log system metrics: {e}")
 
-# (log_nlp_statistics unchanged, already includes step)
+# (log_nlp_statistics - fixed W&B table logging step)
 def log_nlp_statistics(doc: Doc, step: int, doc_id: Optional[str], config: RunConfig):
     if config.disable_wandb or not wandb.run: return
     stats_log = {}
@@ -236,17 +256,22 @@ def log_nlp_statistics(doc: Doc, step: int, doc_id: Optional[str], config: RunCo
         pos_counts = {}; ent_counts = {}
         for token in doc:
             pos_counts[token.pos_] = pos_counts.get(token.pos_, 0) + 1
+            # Correctly check ent_iob_ which exists, ENT_IOB is for saving
             if token.ent_iob_ != "O": ent_counts[token.ent_type_] = ent_counts.get(token.ent_type_, 0) + 1
         if pos_counts:
              pos_data = [[pos, count, f"{(count/token_count*100):.1f}%"] for pos, count in sorted(pos_counts.items(), key=lambda i: i[1], reverse=True)]
-             try: wandb.log({"nlp/pos_distribution_table": wandb.Table(data=pos_data, columns=["POS", "Count", "Percentage"])}, step=step)
+             # Log table separately to potentially avoid step conflicts if other logs happen almost simultaneously
+             try:
+                 wandb.log({"nlp/pos_distribution_table": wandb.Table(data=pos_data, columns=["POS", "Count", "Percentage"])}, step=step)
              except Exception as tbl_e: logging.warning(f"Failed to log POS table: {tbl_e}")
+
         stats_log["nlp/entity_count"] = len(doc.ents)
         for ent_type, count in ent_counts.items(): stats_log[f"nlp/entities/{ent_type}"] = count
         try: sentences = list(doc.sents); sentence_count = len(sentences)
         except: sentences=[]; sentence_count=0
         stats_log["nlp/sentence_count"] = sentence_count
         stats_log["nlp/avg_sentence_len_tokens"] = token_count / sentence_count if sentence_count > 0 else 0
+        # Log the main stats dictionary
         wandb.log(stats_log, step=step)
     except Exception as e: logging.warning(f"Could not log NLP stats for {doc_id}: {e}")
 
@@ -275,15 +300,25 @@ def process_document(text: str, doc_id: str, dest_path: Path, nlp: Language, con
         if texts:
             non_empty=[t for t in texts if t]
             if non_empty:
-                 n_proc=1 if len(non_empty)==1 else config.n_process; b_size=config.batch_size; logging.debug(f"[DEBUG {doc_id}] nlp.pipe: n={n_proc}, batch={b_size}, segs={len(non_empty)}...")
-                 try: processed=nlp.pipe(non_empty,n_process=n_proc,batch_size=b_size); docs=list(processed); logging.debug(f"[DEBUG {doc_id}] nlp.pipe finished.")
-                 except Exception as pipe_e: logging.error(f"nlp.pipe fail '{doc_id}': {pipe_e}"); metrics["error"]=f"pipe error: {pipe_e}"; docs=[]
+                 # Explicitly check if multiprocessing should be used
+                 use_multiprocessing = len(non_empty) > 1 and config.n_process > 1
+                 n_proc = config.n_process if use_multiprocessing else 1
+                 b_size = config.batch_size # Keep using config batch size
+
+                 logging.debug(f"[DEBUG {doc_id}] nlp.pipe: n={n_proc}, batch={b_size}, segs={len(non_empty)}...")
+                 try:
+                     processed = nlp.pipe(non_empty, n_process=n_proc, batch_size=b_size)
+                     docs = list(processed) # Consume iterator
+                     logging.debug(f"[DEBUG {doc_id}] nlp.pipe finished.")
+                 except Exception as pipe_e:
+                     logging.error(f"nlp.pipe fail '{doc_id}' (n_process={n_proc}): {pipe_e}")
+                     metrics["error"] = f"pipe error: {pipe_e}"; docs = []
             else: logging.warning(f"No non-empty segments for {doc_id}.")
         metrics["pipe_time_sec"]=time.time()-pipe_start
+
         logging.debug(f"[DEBUG {doc_id}] Combining {len(docs)} docs...")
         combine_start=time.time()
         if len(docs)>1:
-            # Catch UserWarning W101 for trf_data when merging
             with warnings.catch_warnings():
                  warnings.filterwarnings("ignore", category=UserWarning, message=".*Skipping Doc custom extension 'trf_data'.*")
                  final_doc=Doc.from_docs(docs)
@@ -291,10 +326,13 @@ def process_document(text: str, doc_id: str, dest_path: Path, nlp: Language, con
         else: final_doc=Doc(nlp.vocab); logging.warning(f"Created empty Doc for '{doc_id}'.")
         logging.debug(f"[DEBUG {doc_id}] Combine finished.")
         metrics["combine_time_sec"]=time.time()-combine_start
+
         metrics["token_count"]=len(final_doc) if final_doc else 0
+
         logging.debug(f"[DEBUG {doc_id}] Saving document...")
         save_metrics=save_document(final_doc, dest_path, config); metrics.update(save_metrics); logging.debug(f"[DEBUG {doc_id}] Save done. Success: {metrics['save_success']}")
         success=metrics["save_success"] and metrics["error"] is None
+
     except Exception as e:
         logging.exception(f"Critical error processing {doc_id}: {e}"); metrics["error"]=f"Critical: {e}"; success=False
         if not config.disable_wandb and wandb.run:
@@ -323,12 +361,16 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_length", type=int, default=RunConfig.max_length, help="Max doc length (chars) before splitting.")
     parser.add_argument("--n_process", type=int, default=RunConfig.n_process, help="Processes for nlp.pipe. TUNABLE.")
     parser.add_argument("--batch_size", type=int, default=RunConfig.batch_size, help="Batch size for nlp.pipe. TUNABLE.")
-    parser.add_argument("--torch_threads", type=int, default=RunConfig.torch_threads, help="Max PyTorch threads.")
-    # <<< ADDED ATTRIBUTES ARGUMENT >>>
+    parser.add_argument("--torch_threads", type=int, default=RunConfig.torch_threads, help="Max PyTorch threads (eff. 1 if n_process>1).")
+    # Attribute Selection
     parser.add_argument("--attributes", type=str, default="full",
                         choices=["full", "ner_id", "ner_id_idx"],
-                        dest="attributes_key", # Store choice key in config
+                        dest="attributes_key",
                         help="Token attributes to save ('full', 'ner_id', 'ner_id_idx').")
+    # <<< ADDED Skip Argument >>>
+    parser.add_argument("--skip_docs_over_len", type=int, default=None,
+                        help="Skip processing documents longer than this character length. Default: Process all.")
+    # -------------------------
     # Execution Control
     parser.add_argument("--force_sync", action="store_true", help="Force disk sync after saves (SLOW).")
     parser.add_argument("--sample_interval", type=int, default=RunConfig.sample_interval, help="Log detailed metrics every N docs.")
@@ -348,7 +390,7 @@ def create_parser() -> argparse.ArgumentParser:
 
 def main():
     """Main function to orchestrate corpus processing."""
-    global SELECTED_TOKEN_ATTRS # Declare intent to modify global
+    global SELECTED_TOKEN_ATTRS
 
     parser = create_parser()
     args = parser.parse_args()
@@ -362,17 +404,15 @@ def main():
         sys.exit(1)
 
     # --- Select Token Attributes based on Config ---
-    # <<< SET GLOBAL BASED ON CONFIG >>>
     if config.attributes_key == "ner_id":
         SELECTED_TOKEN_ATTRS = TOKEN_ATTRS_NER_ID
     elif config.attributes_key == "ner_id_idx":
         SELECTED_TOKEN_ATTRS = TOKEN_ATTRS_NER_ID_IDX
-    else: # Default or "full"
+    else:
         SELECTED_TOKEN_ATTRS = TOKEN_ATTRS_FULL
     logging.info(f"Using token attribute set: '{config.attributes_key}' ({len(SELECTED_TOKEN_ATTRS)} attributes)")
-    # ----------------------------------------------
 
-    # Setup logging level for DEBUG prints if needed
+    # --- Logging Level Setup ---
     if config.test_doc_id:
         logging.getLogger().setLevel(logging.DEBUG)
         logging.info("Test mode activated, setting log level to DEBUG.")
@@ -390,10 +430,15 @@ def main():
     except OSError as e: logging.exception(f"Could not create directories: {e}"); sys.exit(1)
 
     # --- Torch Thread Setup ---
-    num_torch_threads_to_set = 1 # Apply deadlock workaround
-    logging.info(f"Setting global PyTorch threads to: {num_torch_threads_to_set} (Workaround)")
+    # Apply deadlock workaround if using multiprocessing for pipe
+    if config.n_process > 1:
+        num_torch_threads_to_set = 1
+        logging.info(f"Setting global PyTorch threads to: {num_torch_threads_to_set} (Workaround for n_process > 1)")
+    else:
+        num_torch_threads_to_set = config.torch_threads
+        logging.info(f"Setting global PyTorch threads to: {num_torch_threads_to_set} (n_process=1)")
     torch.set_num_threads(num_torch_threads_to_set)
-    config.torch_threads = num_torch_threads_to_set # Update config to reflect actual value
+    config.torch_threads = num_torch_threads_to_set
 
     # --- Initialize W&B ---
     if not config.disable_wandb:
@@ -404,14 +449,13 @@ def main():
             logging.info(f"Initializing W&B (User: {config.wandb_user}, Project: {config.wandb_project}, Run: {config.run_name})...")
             try:
                 wandb.init(project=config.wandb_project, entity=config.wandb_user, name=config.run_name,
-                           tags=["corpus-processing", config.model_name, "single-model", config.attributes_key]) # Add attr key tag
+                           tags=["corpus-processing", config.model_name, "single-model", config.attributes_key])
                 config.log_to_wandb()
             except Exception as wandb_e:
                  logging.error(f"Error initializing WandB: {wandb_e}. Disabling W&B."); config.disable_wandb = True
     else: logging.info("W&B logging explicitly disabled.")
 
     # --- Load spaCy Model ---
-    # (Model loading unchanged)
     logging.info(f"Loading spaCy model: {config.model_name}...")
     nlp: Optional[Language] = None; start_time_model_load = time.time()
     try:
@@ -422,7 +466,7 @@ def main():
         model_load_time = time.time() - start_time_model_load; mem_after_load = psutil.Process().memory_info().rss / (1024*1024)
         logging.info(f"Model loaded in {model_load_time:.2f}s. Memory: {mem_after_load:.1f}MB")
         if not config.disable_wandb and wandb.run:
-            wandb.log({"perf/model_load_time_sec": model_load_time, "mem/after_load_mb": mem_after_load}, step=0) # Log at step 0
+            wandb.log({"perf/model_load_time_sec": model_load_time, "mem/after_load_mb": mem_after_load}, step=0)
             try: wandb.summary["model/pipeline_components"] = nlp.pipe_names
             except: pass
     except Exception as e:
@@ -434,7 +478,6 @@ def main():
 
 
     # --- Load Index ---
-    # (Index loading unchanged)
     logging.info(f"Loading index: {config.src_index}")
     parsed_index: Optional[pd.DataFrame] = None; n_total_in_index = 0
     try:
@@ -445,14 +488,13 @@ def main():
         parsed_index['document_id']=parsed_index['document_id'].astype(str)
         if parsed_index['document_id'].duplicated().any(): logging.warning("Duplicate IDs in index.")
         n_total_in_index=len(parsed_index.index); logging.info(f"Loaded index: {n_total_in_index} docs.")
-        if not config.disable_wandb and wandb.run: wandb.log({"data/total_docs_in_index": n_total_in_index}, step=0) # Log at step 0
+        if not config.disable_wandb and wandb.run: wandb.log({"data/total_docs_in_index": n_total_in_index}, step=0)
     except Exception as e:
         if config.test_doc_id and config.test_src_path: logging.warning(f"Failed load index, continue test mode: {e}"); parsed_index=None
         else: logging.exception(f"Failed load index '{config.src_index}'. Exit."); sys.exit(1)
 
 
     # ========================== TEST MODE BLOCK ==============================
-    # (Test mode logic unchanged)
     if config.test_doc_id:
         logging.info("*** RUNNING SINGLE FILE TEST ***"); TEST_DOC_ID=config.test_doc_id; TEST_SRC_PATH=config.test_src_path
         if not TEST_SRC_PATH:
@@ -480,7 +522,6 @@ def main():
 
 
     # --- Filter Processed Files (Full Run) ---
-    # (Filtering unchanged)
     logging.info(f"Check processed in {config.dest_dir}..."); done_ids=get_done_ids(config.dest_dir); n_done=len(done_ids)
     parsed_index_filtered = parsed_index
     if n_done > 0:
@@ -495,7 +536,6 @@ def main():
 
 
     # --- Prepare Iteration Data (Full Run) ---
-    # (Prep unchanged)
     logging.info("Preparing data for iteration...");
     try:
         src_paths=parsed_index_filtered['dest_path'].tolist(); doc_ids=parsed_index_filtered['document_id'].tolist(); doc_filenames=[config.dest_dir/f"{did}.spacy" for did in doc_ids]; texts_stream=stream_files(src_paths); logging.info("Data prepared.")
@@ -512,90 +552,87 @@ def main():
     pbar = tqdm(zip(doc_filenames, texts_stream, doc_ids), total=n_left, desc="Processing Docs", unit="doc")
 
     try:
-        for doc_out_path, text, doc_id in pbar: # <<< doc_id is defined for this iteration
+        for doc_out_path, text, doc_id in pbar:
             loop_start = time.time()
-            # Use 1-based index for step count? Let's use total processed + n_done for step
             current_step = n_done + total_processed_in_loop + 1
             logging.info(f"Processing Document ID: {doc_id} ({total_processed_in_loop + 1}/{n_left})... Step: {current_step}")
 
+            # <<< ADDED LENGTH CHECK AND SKIP LOGIC >>>
+            doc_len = len(text)
+            if config.skip_docs_over_len is not None and doc_len > config.skip_docs_over_len:
+                logging.warning(f"Skipping document {doc_id} (length {doc_len:,} > threshold {config.skip_docs_over_len:,}).")
+                metrics = {
+                    "doc_id": doc_id, "doc_length": doc_len, "error": "Skipped due to length",
+                    "total_proc_time_sec": 0.0, "success": False, "token_count": 0, # Add token_count for consistency
+                    "had_to_split": False, "num_segments": 0, "split_time_sec": 0.0,
+                    "pipe_time_sec": 0.0, "combine_time_sec": 0.0, "save_time_sec": 0.0,
+                    "save_success": False, "file_size_kb": 0.0
+                }
+                all_metrics.append(metrics)
+                success = False
+                final_doc = None # No Doc object
+                # Update counters for skipped file
+                total_processed_in_loop += 1
+                failed_docs += 1
+                if doc_len > 0: processed_chars_total += doc_len # Count chars even if skipped
+                # Log skip event to W&B if enabled
+                if not config.disable_wandb and wandb.run:
+                     try: wandb.log({"stats/skipped_long_doc": 1, "progress/id": doc_id}, step=current_step)
+                     except: pass # Ignore logging errors
+                pbar.set_description(f"Skipped(len): {doc_id[:15]}")
+                continue # Move to the next document in the loop
+            # <<< END OF LENGTH CHECK >>>
+
+            # --- Process document if not skipped ---
             success, metrics, final_doc = process_document(
                 text, doc_id=doc_id, dest_path=doc_out_path, nlp=nlp, config=config
             )
             all_metrics.append(metrics)
             if success and final_doc:
-                last_successful_doc = final_doc # Store last good doc object
+                last_successful_doc = final_doc
 
-            # Update Counters
+            # --- Update Counters ---
             total_processed_in_loop += 1
-            doc_len = metrics.get("doc_length", 0)
+            # doc_len already calculated above
             if doc_len > 0: processed_chars_total += doc_len
             if success: successful_docs += 1
             else: failed_docs += 1
 
-            # Live Logging
+            # --- Live Logging ---
             loop_time = time.time() - loop_start
             if not config.disable_wandb and wandb.run:
-                elapsed = time.time() - start_time_total
-                docs_ps = total_processed_in_loop / elapsed if elapsed > 0 else 0.0
-                chars_ps = processed_chars_total / elapsed if elapsed > 0 else 0.0
-                est_rem_s = (elapsed / total_processed_in_loop) * (n_left - total_processed_in_loop) if total_processed_in_loop > 0 else 0.0
-                log_data = {
-                    "progress/n_total": current_step, "progress/n_this_run": total_processed_in_loop,
-                    "progress/percent": (current_step / (n_left + n_done)) * 100 if (n_left + n_done) > 0 else 0.0,
-                    "progress/id": doc_id, "perf/len": metrics.get("doc_length", 0),
-                    "perf/proc_sec": metrics.get("total_proc_time_sec", 0.0), "perf/save_sec": metrics.get("save_time_sec", 0.0),
-                    "perf/pipe_sec": metrics.get("pipe_time_sec", 0.0), "perf/docs_ps": docs_ps,
-                    "perf/chars_ps": chars_ps, "time/elapsed_min": elapsed / 60,
-                    "time/est_rem_min": est_rem_s / 60, "stats/ok": successful_docs,
-                    "stats/fail": failed_docs, "stats/tokens": metrics.get("token_count", 0),
-                    "stats/fsize_kb": metrics.get("file_size_kb", 0.0), "perf/loop_sec": loop_time,
-                }
-                if total_processed_in_loop % 20 == 0 or total_processed_in_loop == n_left:
-                    try:
-                        log_data["progress/pie"] = Plotly(progress_piechart(current_step, n_left + n_done))
+                elapsed=time.time()-start_time_total; docs_ps=total_processed_in_loop/elapsed if elapsed>0 else 0.0; chars_ps=processed_chars_total/elapsed if elapsed>0 else 0.0; est_rem_s=(elapsed/total_processed_in_loop)*(n_left-total_processed_in_loop) if total_processed_in_loop>0 else 0.0
+                log_data={"progress/n_total":current_step,"progress/n_this_run":total_processed_in_loop,"progress/percent":(current_step/(n_left+n_done))*100 if (n_left+n_done)>0 else 0.0,"progress/id":doc_id,"perf/len":metrics.get("doc_length",0),"perf/proc_sec":metrics.get("total_proc_time_sec",0.0),"perf/save_sec":metrics.get("save_time_sec",0.0),"perf/pipe_sec":metrics.get("pipe_time_sec",0.0),"perf/docs_ps":docs_ps,"perf/chars_ps":chars_ps,"time/elapsed_min":elapsed/60,"time/est_rem_min":est_rem_s/60,"stats/ok":successful_docs,"stats/fail":failed_docs,"stats/tokens":metrics.get("token_count",0),"stats/fsize_kb":metrics.get("file_size_kb",0.0),"perf/loop_sec":loop_time,}
+                if total_processed_in_loop%20==0 or total_processed_in_loop==n_left:
+                    try: log_data["progress/pie"]=Plotly(progress_piechart(current_step,n_left+n_done))
                     except Exception as plot_e: logging.warning(f"Pie chart failed: {plot_e}")
-                try:
-                    wandb.log(log_data, step=current_step)
+                try: wandb.log(log_data,step=current_step)
                 except Exception as log_e: logging.warning(f"W&B log fail step {current_step}: {log_e}")
 
-            # Periodic Tasks
-            if total_processed_in_loop % config.checkpoint_interval == 0 and total_processed_in_loop > 0:
-                logging.info(f"[{total_processed_in_loop}] Saving checkpoint...")
-                cp_path = checkpoint_dir / f"checkpoint_{current_step}.csv"
+            # --- Periodic Tasks ---
+            if total_processed_in_loop%config.checkpoint_interval==0 and total_processed_in_loop>0:
+                logging.info(f"[{total_processed_in_loop}] Saving checkpoint..."); cp_path=checkpoint_dir/f"checkpoint_{current_step}.csv"
                 try:
-                    pd.DataFrame(all_metrics).assign(timestamp=time.time()).to_csv(cp_path, index=False)
-                    logging.info(f"Checkpoint -> {cp_path}")
+                    pd.DataFrame(all_metrics).assign(timestamp=time.time()).to_csv(cp_path,index=False); logging.info(f"Checkpoint -> {cp_path}")
                     if not config.disable_wandb and wandb.run:
-                        try:
-                            art = wandb.Artifact(f"checkpoint_{current_step}", type="checkpoint")
-                            art.add_file(str(cp_path)); wandb.log_artifact(art)
+                        try: art=wandb.Artifact(f"checkpoint_{current_step}",type="checkpoint"); art.add_file(str(cp_path)); wandb.log_artifact(art)
                         except Exception as log_e: logging.warning(f"Log artifact fail: {log_e}")
                 except Exception as cp_e: logging.error(f"Checkpoint save fail: {cp_e}")
 
-            if total_processed_in_loop % config.sample_interval == 0 and total_processed_in_loop > 0:
-                logging.info(f"[{total_processed_in_loop}] Logging detailed metrics...")
-                log_system_metrics(config, step=current_step)
+            if total_processed_in_loop%config.sample_interval==0 and total_processed_in_loop>0:
+                logging.info(f"[{total_processed_in_loop}] Logging detailed metrics...");
+                log_system_metrics(config,step=current_step) # Log system metrics
                 if last_successful_doc:
-                    # -------------------- FIX IS HERE --------------------
-                    # Use the 'doc_id' from the current loop iteration, not from the potentially old 'last_successful_doc'
-                    log_nlp_statistics(last_successful_doc, current_step, doc_id, config)
-                    # ----------------------------------------------------
-                else:
-                    logging.info(f"[{total_processed_in_loop}] Skip NLP stats log.")
+                    log_nlp_statistics(last_successful_doc,current_step,doc_id,config) # Log NLP stats
+                else: logging.info(f"[{total_processed_in_loop}] Skip NLP stats log.")
 
-            if total_processed_in_loop % (config.checkpoint_interval // 2 + 1) == 0 and total_processed_in_loop > 0:
-                manage_memory(total_processed_in_loop)
+            if total_processed_in_loop%(config.checkpoint_interval//2+1)==0 and total_processed_in_loop>0: manage_memory(total_processed_in_loop)
+            pbar.set_description(f"Last {'OK' if success else 'FAIL'}: {doc_id[:15]} ({metrics.get('total_proc_time_sec',0.0):.2f}s)")
 
-            pbar.set_description(f"Last: {doc_id[:15]} ({metrics.get('total_proc_time_sec', 0.0):.2f}s)")
-
-    except KeyboardInterrupt:
-        logging.warning("\nInterrupted. Exiting loop.")
-    finally:
-        pbar.close()
-        logging.info("Loop finished/interrupted.")
+    except KeyboardInterrupt: logging.warning("\nInterrupted. Exiting loop.")
+    finally: pbar.close(); logging.info("Loop finished/interrupted.")
 
     # --- Final Index and Checkpoint ---
-    # (Final save logic unchanged)
     logging.info("Saving final index & metrics...");
     if not all_metrics: logging.warning("No docs processed, skip final save.")
     else:
@@ -615,14 +652,31 @@ def main():
                 except Exception as log_e: logging.warning(f"Log metrics artifact fail: {log_e}")
         except Exception as final_e: logging.exception(f"Final save error: {final_e}")
 
-# --- Final Summary ---
-    # ... (calculate summary values) ...
+    # --- Final Summary ---
+    logging.info("Calculating final summary...");
+    # <<< Initialize summary variables >>>
+    processing_time_total_sec = time.time()-start_time_total;
+    actual_processed_count = total_processed_in_loop # Use the loop counter
+    # <<< Handle case where loop was interrupted before processing any files >>>
+    if actual_processed_count == 0:
+        logging.warning("No documents were fully processed in the loop. Summary figures might be zero.")
+        # Ensure these exist even if loop didn't run/finish
+        n_total_in_index = 0 if parsed_index is None else n_total_in_index
+        n_done = n_done if 'n_done' in locals() else 0
+        successful_docs = 0
+        failed_docs = 0
+        processed_chars_total = 0
+
+    success_rate_float=(successful_docs/actual_processed_count*100) if actual_processed_count>0 else 0.0;
+    avg_proc_time_sec=(processing_time_total_sec/actual_processed_count) if actual_processed_count>0 else 0.0;
+    avg_chars_per_sec=(processed_chars_total/processing_time_total_sec) if processing_time_total_sec>0 else 0.0;
+
     summary_data = [
         ("Total Documents in Index", n_total_in_index if parsed_index is not None else "N/A"),
         ("Documents Already Processed (Skipped)", n_done),
         ("Documents Attempted in This Run", actual_processed_count),
         ("Successfully Processed (this run)", successful_docs),
-        ("Failed (this run)", failed_docs),
+        ("Failed (this run)", failed_docs), # Will include skipped docs
         ("Success Rate (this run)", success_rate_float), # Float for W&B
         ("Total Processing Time (min)", processing_time_total_sec / 60),
         ("Avg Time per Document (sec, this run)", avg_proc_time_sec),
@@ -631,13 +685,15 @@ def main():
         ("Config: spaCy Processes (nlp.pipe)", config.n_process),
         ("Config: spaCy Batch Size (nlp.pipe)", config.batch_size),
         ("Config: Max Document Length (chars)", config.max_length),
-        ("Config: PyTorch Threads", config.torch_threads),
-        # <<< REMOVE THIS LINE before logging to W&B Table >>>
-        # ("Conf: Attrs", config.attributes_key)
+        ("Config: PyTorch Threads", config.torch_threads), # Shows actual threads used (usually 1)
+        # ("Conf: Attrs", config.attributes_key) # Excluded for W&B Table
     ]
     print("\n" + "="*25 + " Processing Summary " + "="*25)
     # Print including the attributes key
-    for name, val in summary_data + [("Conf: Attrs", config.attributes_key)]: # Add it just for printing
+    print_summary_list = summary_data + [("Conf: Attrs", config.attributes_key)] # Add for printing
+    if config.skip_docs_over_len is not None: # Add skip info if used
+         print_summary_list.append(("Conf: Skipped Docs > Length", config.skip_docs_over_len))
+    for name, val in print_summary_list:
          print(f"{name:<45}: {val:.2f}%" if name=="Success Rate (this run)" else (f"{val:.2f}" if isinstance(val, float) else f"{val}"))
     print("="*70)
     if not config.disable_wandb and wandb.run:
@@ -646,7 +702,8 @@ def main():
             # Use summary_data *without* the Attrs string for the table
             summary_table_data = [[item[0], item[1]] for item in summary_data]
             wandb.log({"final_summary": wandb.Table(data=summary_table_data, columns=["Metric", "Value"])})
-            wandb.log({"perf/avg_doc_time_sec":avg_t_s,"perf/avg_chars_per_sec":avg_ch_s,"stats/success_rate_percent":rate_float,"time/total_runtime_min":t_total_s/60,"stats/total_successful":successful_docs,"stats/total_failed":failed_docs})
+            # Log key summary stats
+            wandb.log({"perf/avg_doc_time_sec":avg_proc_time_sec,"perf/avg_chars_per_sec":avg_chars_per_sec,"stats/success_rate_percent":rate_float,"time/total_runtime_min":processing_time_total_sec/60,"stats/total_successful":successful_docs,"stats/total_failed":failed_docs})
             logging.info("Finishing W&B run..."); wandb.finish(); logging.info("W&B run finished.")
         except Exception as log_e: logging.error(f"Final W&B log/finish error: {log_e}")
 
