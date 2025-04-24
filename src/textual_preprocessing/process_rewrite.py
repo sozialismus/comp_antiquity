@@ -615,18 +615,37 @@ def main():
                 except Exception as log_e: logging.warning(f"Log metrics artifact fail: {log_e}")
         except Exception as final_e: logging.exception(f"Final save error: {final_e}")
 
-    # --- Final Summary ---
-    # (Summary logic unchanged)
-    logging.info("Calculating final summary..."); t_total_s=time.time()-start_time_total; n_actual=total_processed_in_loop
-    rate_float=(successful_docs/n_actual*100) if n_actual>0 else 0.0; avg_t_s=(t_total_s/n_actual) if n_actual>0 else 0.0; avg_ch_s=(processed_chars_total/t_total_s) if t_total_s>0 else 0.0
-    summary=[("Index Total",n_total_in_index if parsed_index is not None else "N/A"),("Skipped (Done)",n_done),("Attempted",n_actual),("Successful",successful_docs),("Failed",failed_docs),("Success Rate",rate_float),("Total Time (min)",t_total_s/60),("Avg Time/Doc (s)",avg_t_s),("Avg Speed (char/s)",avg_ch_s),("Total Chars",processed_chars_total),("Conf: nlp.pipe Procs",config.n_process),("Conf: nlp.pipe Batch",config.batch_size),("Conf: Max Length",config.max_length),("Conf: Torch Threads",config.torch_threads),("Conf: Attrs", config.attributes_key)] # Added Attrs key to summary
-    print("\n"+"="*25+" Processing Summary "+"="*25)
-    for name,val in summary: print(f"{name:<45}: {val:.2f}%" if name=="Success Rate" else (f"{val:.2f}" if isinstance(val,float) else f"{val}"))
+# --- Final Summary ---
+    # ... (calculate summary values) ...
+    summary_data = [
+        ("Total Documents in Index", n_total_in_index if parsed_index is not None else "N/A"),
+        ("Documents Already Processed (Skipped)", n_done),
+        ("Documents Attempted in This Run", actual_processed_count),
+        ("Successfully Processed (this run)", successful_docs),
+        ("Failed (this run)", failed_docs),
+        ("Success Rate (this run)", success_rate_float), # Float for W&B
+        ("Total Processing Time (min)", processing_time_total_sec / 60),
+        ("Avg Time per Document (sec, this run)", avg_proc_time_sec),
+        ("Avg Processing Speed (chars/sec, this run)", avg_chars_per_sec),
+        ("Total Characters Processed (this run)", processed_chars_total),
+        ("Config: spaCy Processes (nlp.pipe)", config.n_process),
+        ("Config: spaCy Batch Size (nlp.pipe)", config.batch_size),
+        ("Config: Max Document Length (chars)", config.max_length),
+        ("Config: PyTorch Threads", config.torch_threads),
+        # <<< REMOVE THIS LINE before logging to W&B Table >>>
+        # ("Conf: Attrs", config.attributes_key)
+    ]
+    print("\n" + "="*25 + " Processing Summary " + "="*25)
+    # Print including the attributes key
+    for name, val in summary_data + [("Conf: Attrs", config.attributes_key)]: # Add it just for printing
+         print(f"{name:<45}: {val:.2f}%" if name=="Success Rate (this run)" else (f"{val:.2f}" if isinstance(val, float) else f"{val}"))
     print("="*70)
     if not config.disable_wandb and wandb.run:
         logging.info("Logging final summary to W&B...")
         try:
-            wandb.log({"final_summary": wandb.Table(data=[[i[0],i[1]] for i in summary],columns=["Metric","Value"])})
+            # Use summary_data *without* the Attrs string for the table
+            summary_table_data = [[item[0], item[1]] for item in summary_data]
+            wandb.log({"final_summary": wandb.Table(data=summary_table_data, columns=["Metric", "Value"])})
             wandb.log({"perf/avg_doc_time_sec":avg_t_s,"perf/avg_chars_per_sec":avg_ch_s,"stats/success_rate_percent":rate_float,"time/total_runtime_min":t_total_s/60,"stats/total_successful":successful_docs,"stats/total_failed":failed_docs})
             logging.info("Finishing W&B run..."); wandb.finish(); logging.info("W&B run finished.")
         except Exception as log_e: logging.error(f"Final W&B log/finish error: {log_e}")
