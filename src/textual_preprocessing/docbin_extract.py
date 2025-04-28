@@ -35,7 +35,7 @@ def run_python_script_in_conda_env(
     script_content: str,
     log_context: Dict[str, Any], # Pass logger args like old_id, new_id etc.
     logger: Optional['FileOperationLogger'] = None,
-    timeout: int = 300 # Default timeout in seconds
+    timeout: int = 300
 ) -> bool:
     """
     Writes python code to a temp file and runs it in a specified conda env.
@@ -46,7 +46,8 @@ def run_python_script_in_conda_env(
     temp_script_fd, temp_script_path = tempfile.mkstemp(suffix='.py', text=True)
     os.close(temp_script_fd)
     success = False
-    log_file_type = log_context.get('file_type', 'unknown_script') # Get file type for logging
+    # We get file_type from log_context now, don't need local var here
+    # log_file_type = log_context.get('file_type', 'unknown_script')
 
     try:
         with open(temp_script_path, 'w', encoding='utf-8') as f_script:
@@ -55,18 +56,20 @@ def run_python_script_in_conda_env(
         cmd = f"conda run -n {conda_env} python {temp_script_path}"
         result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True, timeout=timeout)
 
-        # Check stderr for warnings/errors printed by the script itself (e.g., print to sys.stderr)
+        # Check stderr for warnings/errors printed by the script itself
         if result.stderr and logger:
              logger.log_operation(
-                 **log_context, # Unpack context like old_id, new_id, source, dest etc.
-                 operation_type="extract", file_type=log_file_type, status="warning",
+                 **log_context, # Unpack context like old_id, new_id, source, dest, file_type etc.
+                 operation_type="extract", status="warning", # Keep explicit operation_type and status
                  details=f"Extraction script stderr: {result.stderr.strip()}"
+                 # REMOVED explicit file_type argument here
              )
 
         if logger:
             logger.log_operation(
-                **log_context,
-                operation_type="extract", file_type=log_file_type, status="success"
+                **log_context, # Unpack context
+                operation_type="extract", status="success" # Keep explicit operation_type and status
+                # REMOVED explicit file_type argument here
             )
         success = True
 
@@ -74,30 +77,39 @@ def run_python_script_in_conda_env(
          error_details = f"Command timed out ({e.timeout}s): {e.cmd}\nStderr: {e.stderr}\nStdout: {e.stdout}"
          if logger:
              logger.log_operation(
-                 **log_context, operation_type="extract", file_type=log_file_type, status="failed",
+                 **log_context, # Unpack context
+                 operation_type="extract", status="failed", # Keep explicit operation_type and status
                  details=error_details
+                 # REMOVED explicit file_type argument here
              )
     except subprocess.CalledProcessError as e:
         error_details = f"Command failed: {e.cmd}\nStderr: {e.stderr}\nStdout: {e.stdout}"
         if logger:
             logger.log_operation(
-                 **log_context, operation_type="extract", file_type=log_file_type, status="failed",
+                 **log_context, # Unpack context
+                 operation_type="extract", status="failed", # Keep explicit operation_type and status
                  details=error_details
+                 # REMOVED explicit file_type argument here
             )
     except Exception as e:
         if logger:
             logger.log_operation(
-                 **log_context, operation_type="extract", file_type=log_file_type, status="failed",
+                 **log_context, # Unpack context
+                 operation_type="extract", status="failed", # Keep explicit operation_type and status
                  details=f"Unexpected error setting up/running temp script: {str(e)}"
+                 # REMOVED explicit file_type argument here
             )
     finally:
-        # Clean up temp script
+        # Cleanup log operation doesn't use log_context in the same way, so it's fine
         if os.path.exists(temp_script_path):
             try:
                 os.unlink(temp_script_path)
             except OSError as unlink_e:
                  if logger: logger.log_operation(
-                     **log_context, source_file=temp_script_path, destination_file="",
+                     # Pass specific values for cleanup context
+                     old_id=log_context.get('old_id','?'), new_id=log_context.get('new_id','?'),
+                     corpus_prefix=log_context.get('corpus_prefix','?'),
+                     source_file=temp_script_path, destination_file="",
                      operation_type="cleanup", file_type="temp_script", status="failed",
                      details=f"Could not remove temp script: {unlink_e}"
                  )
