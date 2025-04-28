@@ -804,21 +804,27 @@ with open(output_conllu_path, "w", encoding="utf-8") as f_out:
 def load_index(index_path: str) -> Dict[str, str]:
     """
     Load an index file (CSV, comma-delimited) that maps document IDs to file paths.
+    Expects columns 'document_id' and 'processed_path'.
     """
     index = {}
     try:
         # pandas defaults to comma delimiter
         df = pd.read_csv(index_path)
 
-        # Assuming columns: document_id, dest_path
-        if 'document_id' in df.columns and 'dest_path' in df.columns:
+        # --- MODIFIED LINES START ---
+        # Check for 'document_id' and 'processed_path' columns
+        required_path_col = 'processed_path' # Use the correct column name
+        if 'document_id' in df.columns and required_path_col in df.columns:
             for _, row in df.iterrows():
                 # Convert IDs to string and strip whitespace just in case
                 doc_id = str(row['document_id']).strip()
-                file_path = str(row['dest_path']).strip()
+                # Access the path using the correct column name
+                file_path = str(row[required_path_col]).strip()
                 index[doc_id] = file_path
         else:
-            print(f"Warning: Index file '{index_path}' missing required columns 'document_id' or 'dest_path'.")
+            # Updated warning message
+            print(f"Warning: Index file '{index_path}' missing required columns 'document_id' or '{required_path_col}'.")
+        # --- MODIFIED LINES END ---
 
     except Exception as e:
          print(f"Error loading index file '{index_path}': {e}")
