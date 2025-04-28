@@ -8,7 +8,7 @@ Includes comprehensive logging via wandb and CSV.
 
 CSV Delimiter Confirmation: All CSV files read or written by this script
 use COMMAS (,) as delimiters. This includes the input mapping/index CSVs
-and all generated CSV annotation files.
+and all generated CSV annotation files (using QUOTE_ALL for safety).
 """
 import argparse
 import csv
@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import time
 import tempfile # For temporary file handling
+import traceback # For printing tracebacks from temp scripts
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
@@ -46,67 +47,69 @@ def run_python_script_in_conda_env(
     temp_script_fd, temp_script_path = tempfile.mkstemp(suffix='.py', text=True)
     os.close(temp_script_fd)
     success = False
-    # We get file_type from log_context now, don't need local var here
-    # log_file_type = log_context.get('file_type', 'unknown_script')
+    # We get file_type from log_context now
+    log_file_type = log_context.get('file_type', 'unknown_script')
 
     try:
         with open(temp_script_path, 'w', encoding='utf-8') as f_script:
+            # Add a hashbang pointing to python3 for good measure, although conda run should handle it
+            f_script.write("#!/usr/bin/env python3\n")
+            f_script.write("# -*- coding: utf-8 -*-\n") # Ensure UTF-8 interpretation
             f_script.write(script_content)
 
-        cmd = f"conda run -n {conda_env} python {temp_script_path}"
-        result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True, timeout=timeout)
+        cmd = f"conda run --no-capture-output -n {conda_env} python {temp_script_path}" # Try without capture for direct error visibility? Or keep capture_output=True for cleaner logs. Let's keep capture_output for now.
+        cmd = f"conda run -n {conda_env} python {temp_script_path}" # Revert to original command structure
+        result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True, timeout=timeout, encoding='utf-8') # Ensure UTF-8 decoding
 
         # Check stderr for warnings/errors printed by the script itself
-        if result.stderr and logger:
+        # Filter out common benign warnings if needed (e.g., FutureWarning from torch.load)
+        stderr_output = result.stderr.strip() if result.stderr else ""
+        if stderr_output and "FutureWarning: You are using `torch.load`" not in stderr_output and logger:
              logger.log_operation(
-                 **log_context, # Unpack context like old_id, new_id, source, dest, file_type etc.
-                 operation_type="extract", status="warning", # Keep explicit operation_type and status
-                 details=f"Extraction script stderr: {result.stderr.strip()}"
-                 # REMOVED explicit file_type argument here
+                 **log_context,
+                 operation_type="extract", status="warning",
+                 details=f"Extraction script stderr: {stderr_output}"
              )
 
         if logger:
             logger.log_operation(
-                **log_context, # Unpack context
-                operation_type="extract", status="success" # Keep explicit operation_type and status
-                # REMOVED explicit file_type argument here
+                **log_context,
+                operation_type="extract", status="success"
             )
         success = True
 
     except subprocess.TimeoutExpired as e:
-         error_details = f"Command timed out ({e.timeout}s): {e.cmd}\nStderr: {e.stderr}\nStdout: {e.stdout}"
+         stderr_output = e.stderr.strip() if e.stderr else "N/A"
+         stdout_output = e.stdout.strip() if e.stdout else "N/A"
+         error_details = f"Command timed out ({e.timeout}s): {e.cmd}\nStderr: {stderr_output}\nStdout: {stdout_output}"
          if logger:
              logger.log_operation(
-                 **log_context, # Unpack context
-                 operation_type="extract", status="failed", # Keep explicit operation_type and status
+                 **log_context, operation_type="extract", status="failed",
                  details=error_details
-                 # REMOVED explicit file_type argument here
              )
     except subprocess.CalledProcessError as e:
-        error_details = f"Command failed: {e.cmd}\nStderr: {e.stderr}\nStdout: {e.stdout}"
+        stderr_output = e.stderr.strip() if e.stderr else "N/A"
+        stdout_output = e.stdout.strip() if e.stdout else "N/A"
+        error_details = f"Command failed (Exit Code {e.returncode}): {e.cmd}\nStderr: {stderr_output}\nStdout: {stdout_output}"
         if logger:
             logger.log_operation(
-                 **log_context, # Unpack context
-                 operation_type="extract", status="failed", # Keep explicit operation_type and status
+                 **log_context, operation_type="extract", status="failed",
                  details=error_details
-                 # REMOVED explicit file_type argument here
             )
     except Exception as e:
+        # General exception during setup/execution (e.g., file system errors)
         if logger:
             logger.log_operation(
-                 **log_context, # Unpack context
-                 operation_type="extract", status="failed", # Keep explicit operation_type and status
-                 details=f"Unexpected error setting up/running temp script: {str(e)}"
-                 # REMOVED explicit file_type argument here
+                 **log_context, operation_type="extract", status="failed",
+                 details=f"Unexpected error setting up/running temp script: {type(e).__name__}: {e}"
             )
     finally:
-        # Cleanup log operation doesn't use log_context in the same way, so it's fine
+        # Cleanup log operation
         if os.path.exists(temp_script_path):
             try:
                 os.unlink(temp_script_path)
             except OSError as unlink_e:
                  if logger: logger.log_operation(
-                     # Pass specific values for cleanup context
                      old_id=log_context.get('old_id','?'), new_id=log_context.get('new_id','?'),
                      corpus_prefix=log_context.get('corpus_prefix','?'),
                      source_file=temp_script_path, destination_file="",
@@ -127,7 +130,7 @@ class FileOperationLogger:
         self.run_name = f"reorganization-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
         try:
-            # Create log file with headers (using comma delimiter)
+            os.makedirs(os.path.dirname(log_file_path), exist_ok=True) # Ensure log directory exists
             with open(log_file_path, 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile) # Defaults to comma
                 writer.writerow([
@@ -139,7 +142,6 @@ class FileOperationLogger:
             print(f"!!! Error creating log file {log_file_path}: {e}. Logging disabled for CSV.")
             self.log_file_path = None # Prevent further attempts
 
-        # Initialize wandb if enabled
         if use_wandb:
             try:
                 wandb.init(project=wandb_project, name=self.run_name)
@@ -149,7 +151,7 @@ class FileOperationLogger:
                 })
             except Exception as e:
                 print(f"!!! Error initializing wandb: {e}. Wandb logging disabled.")
-                self.use_wandb = False # Disable wandb if init fails
+                self.use_wandb = False
 
     def log_operation(
         self,
@@ -166,7 +168,7 @@ class FileOperationLogger:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         src_str = str(source_file)
         dest_str = str(destination_file)
-        details_str = str(details) # Ensure details are string
+        details_str = str(details)
 
         entry = {
             'timestamp': timestamp,
@@ -182,11 +184,10 @@ class FileOperationLogger:
         }
         self.log_entries.append(entry)
 
-        # Write to CSV immediately (if path is valid)
         if self.log_file_path:
             try:
                 with open(self.log_file_path, 'a', newline='', encoding='utf-8') as csvfile:
-                    writer = csv.writer(csvfile) # Defaults to comma
+                    writer = csv.writer(csvfile)
                     writer.writerow([
                         timestamp, old_id, new_id, corpus_prefix,
                         src_str, dest_str, operation_type,
@@ -195,61 +196,60 @@ class FileOperationLogger:
             except OSError as e:
                  print(f"!!! Warning: Failed to write to CSV log {self.log_file_path}: {e}")
 
-        # Log to wandb if enabled
-        if self.use_wandb:
+        if self.use_wandb and wandb.run: # Check if wandb run is active
             try:
-                # Log individual operations with a prefix for clarity
-                log_payload = {f"op_{operation_type}/{file_type}_{status}": 1} # Count occurrences
-                # Add more detailed log entry keyed by document ID and timestamp?
-                # Using wandb.log steps might be better for sequential events.
+                # Log specific counts for aggregation and detailed entry
                 wandb.log({
-                    "file_operation_details": entry, # Log full details
-                    f"status_counts/{status}": 1,    # Increment status count
-                    f"op_counts/{operation_type}": 1, # Increment op count
-                    f"type_counts/{file_type}": 1,   # Increment file type count
-                    # Custom charts might need step= or commit=False/True logic
-                })
+                    f"counts/status/{status}": 1,
+                    f"counts/operation/{operation_type}": 1,
+                    f"counts/file_type/{file_type}": 1,
+                    "events/file_operations": entry # Log detailed entry maybe as artifact or table later? For now, just log it.
+                }, commit=True) # Commit each operation log
             except Exception as e:
-                 # Prevent wandb errors from crashing the script
                  print(f"!!! Warning: Failed to log operation to wandb: {e}")
 
     def summarize_and_close(self) -> Dict[str, Any]:
         # --- Calculation logic remains the same ---
         total_operations = len(self.log_entries)
-        successful_operations = sum(1 for entry in self.log_entries if entry['status'] == 'success')
-        failed_operations = sum(1 for entry in self.log_entries if entry['status'] == 'failed')
-        warning_operations = sum(1 for entry in self.log_entries if entry['status'] == 'warning')
-
+        status_counts = {'success': 0, 'failed': 0, 'warning': 0, 'info': 0, 'skipped': 0}
         operation_counts = {}
+        file_type_counts = {}
+        unique_old_ids = set()
+        unique_new_ids = set()
+
         for entry in self.log_entries:
+            status_counts[entry['status']] = status_counts.get(entry['status'], 0) + 1
             op_type = entry['operation_type']
             operation_counts[op_type] = operation_counts.get(op_type, 0) + 1
-
-        file_type_counts = {}
-        for entry in self.log_entries:
             file_type = entry['file_type']
             file_type_counts[file_type] = file_type_counts.get(file_type, 0) + 1
+            if entry['operation_type'] == 'process_start':
+                unique_old_ids.add(entry['old_id'])
+                unique_new_ids.add(entry['new_id'])
 
-        unique_old_ids = set(entry['old_id'] for entry in self.log_entries if entry['operation_type'] == 'process_start')
-        unique_new_ids = set(entry['new_id'] for entry in self.log_entries if entry['operation_type'] == 'process_start')
+        successful_operations = status_counts.get('success', 0)
+        failed_operations = status_counts.get('failed', 0)
+        warning_operations = status_counts.get('warning', 0)
+        # Consider only success/failed for success rate, or include warnings/skips?
+        relevant_ops_for_rate = successful_operations + failed_operations
+        success_rate = successful_operations / relevant_ops_for_rate if relevant_ops_for_rate > 0 else 0
 
         summary = {
             'total_operations': total_operations,
             'successful_operations': successful_operations,
             'failed_operations': failed_operations,
             'warning_operations': warning_operations,
+            'other_status_operations': sum(v for k, v in status_counts.items() if k not in ['success', 'failed', 'warning']),
             'operation_counts': operation_counts,
             'file_type_counts': file_type_counts,
             'unique_documents_processed': len(unique_old_ids),
             'unique_new_ids_created': len(unique_new_ids),
-            'success_rate': successful_operations / total_operations if total_operations > 0 else 0,
+            'success_rate': success_rate,
         }
 
-        # Log summary to wandb
-        if self.use_wandb:
+        if self.use_wandb and wandb.run:
             try:
-                # Log final summary metrics
-                wandb.summary.update(summary) # Use wandb.summary for final values
+                wandb.summary.update(summary)
                 wandb.summary.update({
                     "completion_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 })
@@ -258,20 +258,27 @@ class FileOperationLogger:
                 columns = ["Metric", "Value"]
                 data = [
                     ["Total Operations", total_operations],
-                    ["Successful Operations", successful_operations],
-                    ["Failed Operations", failed_operations],
-                    ["Warning Operations", warning_operations],
-                    ["Success Rate", f"{summary['success_rate']:.2%}"],
-                    ["Unique Documents Processed", len(unique_old_ids)],
+                    ["Successful Ops", successful_operations],
+                    ["Failed Ops", failed_operations],
+                    ["Warning Ops", warning_operations],
+                    ["Other Status Ops", summary['other_status_operations']],
+                    ["Success Rate (Success/Fail)", f"{success_rate:.2%}"],
+                    ["Unique Docs Processed", len(unique_old_ids)],
                     ["Unique New IDs Created", len(unique_new_ids)]
                 ]
-                for op_type, count in operation_counts.items():
-                    data.append([f"Operation: {op_type}", count])
-                for file_type, count in file_type_counts.items():
-                    data.append([f"File Type: {file_type}", count])
+                for op_type, count in sorted(operation_counts.items()):
+                    data.append([f"Op Count: {op_type}", count])
+                for file_type, count in sorted(file_type_counts.items()):
+                    data.append([f"File Type Count: {file_type}", count])
 
                 summary_table = wandb.Table(columns=columns, data=data)
                 wandb.log({"summary_statistics_table": summary_table})
+
+                # Log the raw CSV log file as an artifact
+                if self.log_file_path and os.path.exists(self.log_file_path):
+                     artifact = wandb.Artifact(f"{self.run_name}-log", type="run-log")
+                     artifact.add_file(self.log_file_path)
+                     wandb.log_artifact(artifact)
 
                 wandb.finish()
             except Exception as e:
@@ -280,28 +287,28 @@ class FileOperationLogger:
         return summary
 
 
-# --- Extraction Functions (Now using run_python_script_in_conda_env) ---
+# --- Extraction Functions (Updated with QUOTE_ALL and traceback) ---
 
 def extract_text_from_docbin(
     conda_env: str, docbin_path: str, output_txt_path: str, logger: Optional[FileOperationLogger] = None, **log_ctx
 ) -> bool:
     """Extract plain text using temporary script."""
     script_content = f"""
-import sys, spacy, os
+# -*- coding: utf-8 -*-
+import sys, spacy, os, traceback
 from spacy.tokens import DocBin
 try:
     nlp = spacy.load('grc_proiel_trf')
     doc_bin = DocBin().from_disk(r'{docbin_path}')
-    # Handle potential errors during DocBin loading or if it's empty
     docs = list(doc_bin.get_docs(nlp.vocab))
-    if not docs:
-        raise ValueError("DocBin file contains no documents.")
+    if not docs: raise ValueError("DocBin file contains no documents.")
     doc = docs[0]
-    os.makedirs(os.path.dirname(r'{output_txt_path}'), exist_ok=True) # Ensure dir exists
+    os.makedirs(os.path.dirname(r'{output_txt_path}'), exist_ok=True)
     with open(r'{output_txt_path}', 'w', encoding='utf-8') as f:
         f.write(doc.text)
 except Exception as e:
     print(f"Error in extract_text_from_docbin script: {{e}}", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr)
     sys.exit(1)
 """
     log_ctx.update({'source_file': docbin_path, 'destination_file': output_txt_path, 'file_type': 'txt'})
@@ -313,22 +320,18 @@ def create_fullstop_file(
     """Create a fullstop file. (Runs in current env, no conda needed)"""
     log_ctx.update({'source_file': input_txt_path, 'destination_file': output_txt_path, 'file_type': 'txt-fullstop', 'operation_type': 'create'})
     try:
-        # Check if input file exists before reading
         if not os.path.exists(input_txt_path):
              if logger: logger.log_operation(**log_ctx, status="skipped", details="Input text file missing")
-             return False # Indicate failure if input is missing
+             return False
 
         with open(input_txt_path, 'r', encoding='utf-8') as f:
             text = f.read()
-
         text = re.sub(r'\.(?!\.)', '.\n', text)
         text = re.sub(r'\s+\n', '\n', text)
         text = re.sub(r'\n\s+', '\n', text).strip()
-
-        os.makedirs(os.path.dirname(output_txt_path), exist_ok=True) # Ensure dir exists
+        os.makedirs(os.path.dirname(output_txt_path), exist_ok=True)
         with open(output_txt_path, 'w', encoding='utf-8') as f:
             f.write(text)
-
         if logger: logger.log_operation(**log_ctx, status="success")
         return True
     except Exception as e:
@@ -338,9 +341,10 @@ def create_fullstop_file(
 def extract_lemma_csv(
     conda_env: str, docbin_path: str, output_csv_path: str, logger: Optional[FileOperationLogger] = None, **log_ctx
 ) -> bool:
-    """Extract lemma CSV using temporary script."""
+    """Extract lemma CSV using temporary script with QUOTE_ALL."""
     script_content = f"""
-import sys, csv, spacy, os
+# -*- coding: utf-8 -*-
+import sys, csv, spacy, os, traceback
 from spacy.tokens import DocBin
 try:
     nlp = spacy.load('grc_proiel_trf')
@@ -350,14 +354,15 @@ try:
     doc = docs[0]
     os.makedirs(os.path.dirname(r'{output_csv_path}'), exist_ok=True)
     with open(r'{output_csv_path}', 'w', encoding='utf-8', newline='') as csvfile:
-        writer = csv.writer(csvfile) # Comma delimited
+        writer = csv.writer(csvfile, quoting=csv.QUOTE_ALL) # ADDED QUOTING
         writer.writerow(['ID', 'TOKEN', 'LEMMA'])
         count = 0
         for token in doc:
             count += 1
-            writer.writerow([count, token.text, token.lemma_])
+            writer.writerow([count, str(token.text), token.lemma_]) # Added str()
 except Exception as e:
     print(f"Error in extract_lemma_csv script: {{e}}", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr) # Added traceback
     sys.exit(1)
 """
     log_ctx.update({'source_file': docbin_path, 'destination_file': output_csv_path, 'file_type': 'csv-lemma'})
@@ -366,9 +371,10 @@ except Exception as e:
 def extract_upos_csv(
     conda_env: str, docbin_path: str, output_csv_path: str, logger: Optional[FileOperationLogger] = None, **log_ctx
 ) -> bool:
-    """Extract UPOS CSV using temporary script."""
+    """Extract UPOS CSV using temporary script with QUOTE_ALL."""
     script_content = f"""
-import sys, csv, spacy, os
+# -*- coding: utf-8 -*-
+import sys, csv, spacy, os, traceback
 from spacy.tokens import DocBin
 try:
     nlp = spacy.load('grc_proiel_trf')
@@ -378,14 +384,15 @@ try:
     doc = docs[0]
     os.makedirs(os.path.dirname(r'{output_csv_path}'), exist_ok=True)
     with open(r'{output_csv_path}', 'w', encoding='utf-8', newline='') as csvfile:
-        writer = csv.writer(csvfile)
+        writer = csv.writer(csvfile, quoting=csv.QUOTE_ALL) # ADDED QUOTING
         writer.writerow(['ID', 'TOKEN', 'UPOS'])
         count = 0
         for token in doc:
             count += 1
-            writer.writerow([count, token.text, token.pos_])
+            writer.writerow([count, str(token.text), token.pos_]) # Added str()
 except Exception as e:
     print(f"Error in extract_upos_csv script: {{e}}", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr) # Added traceback
     sys.exit(1)
 """
     log_ctx.update({'source_file': docbin_path, 'destination_file': output_csv_path, 'file_type': 'csv-upos'})
@@ -394,9 +401,10 @@ except Exception as e:
 def extract_stop_csv(
     conda_env: str, docbin_path: str, output_csv_path: str, logger: Optional[FileOperationLogger] = None, **log_ctx
 ) -> bool:
-    """Extract stopword CSV using temporary script."""
+    """Extract stopword CSV using temporary script with QUOTE_ALL."""
     script_content = f"""
-import sys, csv, spacy, os
+# -*- coding: utf-8 -*-
+import sys, csv, spacy, os, traceback
 from spacy.tokens import DocBin
 try:
     nlp = spacy.load('grc_proiel_trf')
@@ -406,14 +414,15 @@ try:
     doc = docs[0]
     os.makedirs(os.path.dirname(r'{output_csv_path}'), exist_ok=True)
     with open(r'{output_csv_path}', 'w', encoding='utf-8', newline='') as csvfile:
-        writer = csv.writer(csvfile)
+        writer = csv.writer(csvfile, quoting=csv.QUOTE_ALL) # ADDED QUOTING
         writer.writerow(['ID', 'TOKEN', 'IS_STOP'])
         count = 0
         for token in doc:
             count += 1
-            writer.writerow([count, token.text, 'TRUE' if token.is_stop else 'FALSE'])
+            writer.writerow([count, str(token.text), 'TRUE' if token.is_stop else 'FALSE']) # Added str()
 except Exception as e:
     print(f"Error in extract_stop_csv script: {{e}}", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr) # Added traceback
     sys.exit(1)
 """
     log_ctx.update({'source_file': docbin_path, 'destination_file': output_csv_path, 'file_type': 'csv-stop'})
@@ -422,9 +431,10 @@ except Exception as e:
 def extract_ner_csv(
     conda_env: str, docbin_path: str, output_csv_path: str, logger: Optional[FileOperationLogger] = None, **log_ctx
 ) -> bool:
-    """Extract NER CSV using temporary script."""
+    """Extract NER CSV using temporary script with QUOTE_ALL."""
     script_content = f"""
-import sys, csv, spacy, os
+# -*- coding: utf-8 -*-
+import sys, csv, spacy, os, traceback
 from spacy.tokens import DocBin
 try:
     nlp = spacy.load('grc_ner_trf') # Use NER model
@@ -434,14 +444,15 @@ try:
     doc = docs[0]
     os.makedirs(os.path.dirname(r'{output_csv_path}'), exist_ok=True)
     with open(r'{output_csv_path}', 'w', encoding='utf-8', newline='') as csvfile:
-        writer = csv.writer(csvfile)
+        writer = csv.writer(csvfile, quoting=csv.QUOTE_ALL) # ADDED QUOTING
         writer.writerow(['ID', 'TOKEN', 'NER'])
         count = 0
         for token in doc:
             count += 1
-            writer.writerow([count, token.text, token.ent_type_ if token.ent_type_ else 'O'])
+            writer.writerow([count, str(token.text), token.ent_type_ if token.ent_type_ else 'O']) # Added str()
 except Exception as e:
     print(f"Error in extract_ner_csv script: {{e}}", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr) # Added traceback
     sys.exit(1)
 """
     log_ctx.update({'source_file': docbin_path, 'destination_file': output_csv_path, 'file_type': 'csv-ner'})
@@ -452,7 +463,8 @@ def extract_ner_tags_to_file(
 ) -> bool:
     """Extract only NER tags using temporary script."""
     script_content = f"""
-import sys, spacy, os
+# -*- coding: utf-8 -*-
+import sys, spacy, os, traceback
 from spacy.tokens import DocBin
 try:
     nlp = spacy.load('grc_ner_trf') # Use NER model
@@ -465,6 +477,7 @@ try:
         f.write('\\n'.join([token.ent_type_ if token.ent_type_ else 'O' for token in doc]))
 except Exception as e:
     print(f"Error in extract_ner_tags_to_file script: {{e}}", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr) # Added traceback
     sys.exit(1)
 """
     log_ctx.update({'source_file': ner_docbin_path, 'destination_file': output_tags_path, 'file_type': 'ner-tags'})
@@ -473,9 +486,10 @@ except Exception as e:
 def extract_dot_csv(
     conda_env: str, docbin_path: str, output_csv_path: str, logger: Optional[FileOperationLogger] = None, **log_ctx
 ) -> bool:
-    """Extract punctuation CSV using temporary script."""
+    """Extract punctuation CSV using temporary script with QUOTE_ALL."""
     script_content = f"""
-import sys, csv, spacy, os
+# -*- coding: utf-8 -*-
+import sys, csv, spacy, os, traceback
 from spacy.tokens import DocBin
 try:
     nlp = spacy.load('grc_proiel_trf')
@@ -485,14 +499,15 @@ try:
     doc = docs[0]
     os.makedirs(os.path.dirname(r'{output_csv_path}'), exist_ok=True)
     with open(r'{output_csv_path}', 'w', encoding='utf-8', newline='') as csvfile:
-        writer = csv.writer(csvfile)
+        writer = csv.writer(csvfile, quoting=csv.QUOTE_ALL) # ADDED QUOTING
         writer.writerow(['ID', 'TOKEN', 'IS_PUNCT'])
         count = 0
         for token in doc:
             count += 1
-            writer.writerow([count, token.text, 'TRUE' if token.is_punct else 'FALSE'])
+            writer.writerow([count, str(token.text), 'TRUE' if token.is_punct else 'FALSE']) # Added str()
 except Exception as e:
     print(f"Error in extract_dot_csv script: {{e}}", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr) # Added traceback
     sys.exit(1)
 """
     log_ctx.update({'source_file': docbin_path, 'destination_file': output_csv_path, 'file_type': 'csv-dot'})
@@ -504,13 +519,9 @@ def extract_conllu_file(
     ner_tags_path: Optional[str], logger: Optional[FileOperationLogger] = None, **log_ctx
 ) -> bool:
     """Extract CoNLL-U using temporary script, incorporating NER tags."""
-    # FIX for f-string backslash issue: Construct the # text line separately.
     script_content = f"""
 # -*- coding: utf-8 -*-
-# Note: Ensure target environment's Python handles UTF-8 correctly.
-import sys
-import spacy
-import os
+import sys, spacy, os, traceback
 from spacy.tokens import DocBin
 
 # --- Configuration ---
@@ -521,16 +532,12 @@ doc_id_str = '{doc_id}'
 # --- End Configuration ---
 
 try:
-    # Load main linguistic model (proiel)
     nlp = spacy.load('grc_proiel_trf')
-
-    # Load DocBin from main model
     doc_bin = DocBin().from_disk(main_docbin_path)
     docs = list(doc_bin.get_docs(nlp.vocab))
     if not docs: raise ValueError("DocBin file contains no documents.")
     doc = docs[0]
 
-    # Load NER tags if path is provided
     ner_tags = None
     if ner_tags_path and os.path.exists(ner_tags_path):
         try:
@@ -538,140 +545,119 @@ try:
                 ner_tags = [line.strip() for line in f_ner if line.strip()]
             if len(ner_tags) != len(doc):
                 print(f"Warning (doc {{doc_id_str}}): Mismatch token count ({{len(doc)}}) vs NER tag count ({{len(ner_tags)}}).", file=sys.stderr)
-                # ner_tags = None # Optionally disable NER on mismatch
         except Exception as e:
             print(f"Warning (doc {{doc_id_str}}): Could not read NER tags from {{ner_tags_path}}: {{e}}.", file=sys.stderr)
             ner_tags = None
     elif ner_tags_path:
          print(f"Warning (doc {{doc_id_str}}): NER tags path does not exist: {{ner_tags_path}}.", file=sys.stderr)
 
-    # Ensure output directory exists
     os.makedirs(os.path.dirname(output_conllu_path), exist_ok=True)
 
-    # Extract CoNLL-U format
     with open(output_conllu_path, "w", encoding="utf-8") as f_out:
         f_out.write(f"# newdoc id = {{doc_id_str}}\\n")
-
         sent_id_counter = 1
         for sent in doc.sents:
-            # Write sentence header
-            sent_text_clean = sent.text.replace('\\n', ' ').replace('\\r', '') # Clean sentence text
+            sent_text_clean = sent.text.replace('\\n', ' ').replace('\\r', '')
             f_out.write(f"# sent_id = {{doc_id_str}}-{{sent_id_counter}}\\n")
-            f_out.write(f"# text = {{sent_text_clean}}\\n") # Write cleaned text
+            f_out.write(f"# text = {{sent_text_clean}}\\n")
 
             token_sent_id_counter = 1
             for token in sent:
                 head_id = token.head.i - sent.start + 1 if token.head.i != token.i else 0
                 feats = str(token.morph) if token.morph else "_"
                 if not feats: feats = "_"
-
                 misc_parts = []
                 if ner_tags:
                     try:
                         ner_tag = ner_tags[token.i]
-                        if ner_tag and ner_tag != 'O': # Only add non-O tags by default
+                        if ner_tag and ner_tag != 'O':
                              misc_parts.append(f"NER={{ner_tag}}")
                     except IndexError:
-                         misc_parts.append("NER=Error") # Mismatch detected earlier
-
+                         misc_parts.append("NER=Error")
                 if token.i + 1 < len(doc) and doc[token.i+1].idx == token.idx + len(token.text):
                      misc_parts.append("SpaceAfter=No")
-
                 misc_field = "|".join(misc_parts) if misc_parts else "_"
-
-                line = (f"{{token_sent_id_counter}}\\t{{token.text}}\\t{{token.lemma_}}\\t{{token.pos_}}\\t"
-                       f"{{token.tag_}}\\t{{feats}}\\t{{head_id}}\\t"
-                       f"{{token.dep_}}\\t_\\t{{misc_field}}\\n")
-                f_out.write(line)
+                # Ensure columns are strings before joining - shouldn't be necessary but safe
+                columns = [
+                    str(token_sent_id_counter), str(token.text), str(token.lemma_), str(token.pos_),
+                    str(token.tag_), feats, str(head_id),
+                    str(token.dep_), "_", misc_field
+                ]
+                f_out.write("\\t".join(columns) + "\\n")
                 token_sent_id_counter += 1
-
             f_out.write("\\n")
             sent_id_counter += 1
 
 except Exception as e:
     print(f"Error in extract_conllu_file script for doc {{doc_id_str}}: {{e}}", file=sys.stderr)
-    # Print traceback for more details
-    import traceback
     traceback.print_exc(file=sys.stderr)
     sys.exit(1)
-
 """
     log_ctx.update({'source_file': main_docbin_path, 'destination_file': output_conllu_path, 'file_type': 'conllu'})
-    # CoNLL-U can take longer, increase timeout maybe
     return run_python_script_in_conda_env(conda_env, script_content, log_ctx, logger, timeout=600)
 
 
-# --- Helper Functions (load_index updated for 'processed_path') ---
-
+# --- Helper Functions ---
 def load_index(index_path: str) -> Dict[str, str]:
-    """
-    Load an index file (CSV, comma-delimited) that maps document IDs to file paths.
-    Expects columns 'document_id' and 'processed_path'.
-    """
+    """Load index CSV ('document_id', 'processed_path')."""
     index = {}
     try:
-        df = pd.read_csv(index_path) # Defaults to comma delimiter
+        df = pd.read_csv(index_path)
         required_path_col = 'processed_path'
         if 'document_id' in df.columns and required_path_col in df.columns:
             for _, row in df.iterrows():
                 doc_id = str(row['document_id']).strip()
                 file_path = str(row[required_path_col]).strip()
-                if doc_id and file_path: # Ensure neither are empty strings
+                if doc_id and file_path:
                      index[doc_id] = file_path
-                else:
-                     print(f"Warning: Skipping row in '{index_path}' with empty document_id or {required_path_col}.")
+                # else: # Reduce noise by not printing warning for every empty row
+                #      print(f"Warning: Skipping row in '{index_path}' with empty document_id or {required_path_col}.")
         else:
             print(f"Warning: Index file '{index_path}' missing required columns 'document_id' or '{required_path_col}'.")
     except FileNotFoundError:
          print(f"Error: Index file not found at '{index_path}'")
-         # Depending on severity, you might want to raise the exception or exit
-         # raise SystemExit(f"Exiting: Index file not found: {index_path}")
+         return {} # Return empty dict on critical error
     except Exception as e:
          print(f"Error loading index file '{index_path}': {e}")
-         # raise
     return index
 
 def parse_csv_mapping(csv_path: str) -> Dict[str, str]:
-    """
-    Parse the CSV file (comma-delimited) containing old to new ID mappings.
-    Returns a dictionary mapping old IDs (str) to new numeric IDs (str).
-    """
+    """Parse mapping CSV ('document_id', 'sort_id')."""
     mappings = {}
     try:
-        df = pd.read_csv(csv_path) # Defaults to comma delimiter
+        df = pd.read_csv(csv_path)
         if 'document_id' in df.columns and 'sort_id' in df.columns:
              for index, row in df.iterrows():
                 old_id = str(row['document_id']).strip()
                 new_id_val = row['sort_id']
-                # Check for NaN/NaT explicitly before converting
                 if pd.notna(new_id_val):
-                    new_id = str(int(new_id_val))
+                    try:
+                         new_id = str(int(new_id_val)) # Ensure it's convertible to int then str
+                    except ValueError:
+                         new_id = None # Treat non-integer sort_id as invalid
+                         print(f"Warning: Invalid non-integer sort_id '{new_id_val}' for document_id '{old_id}' in '{csv_path}'. Skipping.")
                 else:
                     new_id = None
 
                 if old_id and new_id:
                     mappings[old_id] = new_id
-                elif old_id:
-                    print(f"Warning: Missing or invalid sort_id for document_id '{old_id}' in '{csv_path}'. Skipping.")
+                elif old_id and new_id is None and pd.isna(row['sort_id']):
+                     print(f"Warning: Missing sort_id for document_id '{old_id}' in '{csv_path}'. Skipping.")
         else:
              print(f"Warning: Mapping file '{csv_path}' missing required columns 'document_id' or 'sort_id'.")
     except FileNotFoundError:
          print(f"Error: Mapping file not found at '{csv_path}'")
-         # raise SystemExit(f"Exiting: Mapping file not found: {csv_path}")
+         return {} # Return empty dict on critical error
     except Exception as e:
          print(f"Error parsing mapping file '{csv_path}': {e}")
-         # raise
     return mappings
 
 
 def find_original_text(doc_id: str, base_dir: str) -> Optional[str]:
-    """
-    Try to locate the original text file for a document ID.
-    Assumes a structure like base_dir/cleaned_parsed_data/corpus_prefix/...
-    """
-    corpus_prefix_match = re.match(r'^([a-zA-Z0-9\-_]+?)_', doc_id) # Allow hyphen/underscore in prefix
+    """Try to locate the original text file."""
+    corpus_prefix_match = re.match(r'^([a-zA-Z0-9\-_]+?)_', doc_id)
     corpus_prefix = corpus_prefix_match.group(1) if corpus_prefix_match else ""
-    source_sub_dir = "cleaned_parsed_data" # Configurable?
+    source_sub_dir = "cleaned_parsed_data"
 
     possible_paths = []
     if corpus_prefix:
@@ -681,23 +667,15 @@ def find_original_text(doc_id: str, base_dir: str) -> Optional[str]:
             os.path.join(cleaned_dir, filename_part + ".txt"),
             os.path.join(cleaned_dir, doc_id + ".txt"),
         ])
-    # Always check directly under source_sub_dir as fallback or if no prefix
     possible_paths.append(os.path.join(base_dir, source_sub_dir, doc_id + ".txt"))
-    # Maybe even check base_dir directly?
-    # possible_paths.append(os.path.join(base_dir, doc_id + ".txt"))
-
 
     for path in possible_paths:
-        abs_path = os.path.abspath(path) # Check absolute path for clarity
-        # print(f"DEBUG: Checking for original text at: {abs_path}") # Uncomment for deep debug
-        if os.path.exists(abs_path):
-            # print(f"DEBUG: Found original text at: {abs_path}") # Uncomment for deep debug
+        abs_path = os.path.abspath(path)
+        if os.path.exists(abs_path) and os.path.isfile(abs_path): # Check it's a file
             return abs_path
-
     return None
 
 # --- Main Processing Logic ---
-
 def process_document(
     old_id: str, new_id: str, base_dir: str, output_base_dir: str,
     main_index: Dict[str, str], ner_index: Dict[str, str],
@@ -706,40 +684,29 @@ def process_document(
     """Process a single document."""
     overall_success = True
     temp_files_to_clean = []
-
     corpus_prefix_match = re.match(r'^([a-zA-Z0-9\-_]+?)_', old_id)
     corpus_prefix = corpus_prefix_match.group(1) if corpus_prefix_match else "unknown_corpus"
-
-    # Base context for logging operations for this document
     log_context_base = {'old_id': old_id, 'new_id': new_id, 'corpus_prefix': corpus_prefix}
 
-    if logger: logger.log_operation(**log_context_base, source_file="", destination_file="", operation_type="process_start", file_type="document", status="info", details=f"Started processing document {old_id} -> {new_id}")
+    if logger: logger.log_operation(**log_context_base, source_file="", destination_file="", operation_type="process_start", file_type="document", status="info", details=f"Started")
 
     # --- 1. Locate Source Files ---
+    # Main docbin path checked in main loop now
     main_docbin_path = main_index.get(old_id)
-    ner_docbin_path = ner_index.get(old_id) # May be None
-
-    if not main_docbin_path:
-        if logger: logger.log_operation(**log_context_base, source_file="", destination_file="", operation_type="lookup", file_type="main_docbin", status="failed", details="Not found in main index.")
-        return False
-    if not os.path.exists(main_docbin_path):
-        if logger: logger.log_operation(**log_context_base, source_file=main_docbin_path, destination_file="", operation_type="lookup", file_type="main_docbin", status="failed", details="Path not found on disk.")
-        return False
+    ner_docbin_path = ner_index.get(old_id)
 
     ner_docbin_path_resolved = None
     if ner_docbin_path:
-        if os.path.exists(ner_docbin_path):
+        if os.path.exists(ner_docbin_path) and os.path.isfile(ner_docbin_path):
             ner_docbin_path_resolved = ner_docbin_path
         else:
-             if logger: logger.log_operation(**log_context_base, source_file=ner_docbin_path, destination_file="", operation_type="lookup", file_type="ner_docbin", status="warning", details="NER index path not found on disk.")
-    else:
-         if logger: logger.log_operation(**log_context_base, source_file="", destination_file="", operation_type="lookup", file_type="ner_docbin", status="info", details="Not found in NER index.")
-
+             if logger: logger.log_operation(**log_context_base, source_file=ner_docbin_path, destination_file="", operation_type="lookup", file_type="ner_docbin", status="warning", details="NER index path invalid/not found.")
+    # else: # No need to log if not found, covered by index loading warnings perhaps
+    #      if logger: logger.log_operation(**log_context_base, source_file="", destination_file="", operation_type="lookup", file_type="ner_docbin", status="info", details="Not in NER index.")
 
     source_txt_path = find_original_text(old_id, base_dir)
     if not source_txt_path and logger:
-        logger.log_operation(**log_context_base, source_file=f"Searched in {base_dir}", destination_file="", operation_type="lookup", file_type="source_txt", status="warning", details="Original text file not found.")
-
+        logger.log_operation(**log_context_base, source_file=f"Searched in {base_dir}/{'cleaned_parsed_data'}", destination_file="", operation_type="lookup", file_type="source_txt", status="warning", details="Original text file not found.")
 
     # --- 2. Create Output Directories ---
     output_dir = os.path.join(output_base_dir, corpus_prefix, new_id)
@@ -748,7 +715,6 @@ def process_document(
     try:
         os.makedirs(texts_dir, exist_ok=True)
         os.makedirs(annotations_dir, exist_ok=True)
-        # No need to log success here unless verbose needed
     except OSError as e:
          if logger: logger.log_operation(**log_context_base, source_file="", destination_file=output_dir, operation_type="create_dir", file_type="directory", status="failed", details=f"Error: {e}")
          return False
@@ -762,18 +728,18 @@ def process_document(
     output_csv_dot = os.path.join(annotations_dir, f"{new_id}-dot.csv")
     output_csv_ner = os.path.join(annotations_dir, f"{new_id}-ner.csv")
     output_conllu = os.path.join(annotations_dir, f"{new_id}-conllu.conllu")
-    temp_ner_tags_file = os.path.join(annotations_dir, f".{new_id}_temp_ner_tags.txt") # Hidden temp file
-    temp_files_to_clean.append(temp_ner_tags_file)
+    # Using Pathlib for temp file path construction
+    temp_ner_tags_file = Path(annotations_dir) / f".{new_id}_temp_ner_tags.txt"
+    temp_files_to_clean.append(str(temp_ner_tags_file))
 
     # --- 4. Perform Extractions and Operations ---
     try:
         # --- Main Env Operations ---
         if not extract_text_from_docbin(main_env, main_docbin_path, output_txt, logger, **log_context_base):
             overall_success = False
-            # Don't attempt fullstop if text failed
             if logger: logger.log_operation(**log_context_base, source_file=output_txt, destination_file=output_txt_fullstop, operation_type="create", file_type="txt-fullstop", status="skipped", details="Input text failed extraction.")
         elif not create_fullstop_file(output_txt, output_txt_fullstop, logger, **log_context_base):
-             pass # Logged inside function, maybe not critical failure
+             pass # Logged inside, not critical
 
         if not extract_lemma_csv(main_env, main_docbin_path, output_csv_lemma, logger, **log_context_base): overall_success = False
         if not extract_upos_csv(main_env, main_docbin_path, output_csv_upos, logger, **log_context_base): overall_success = False
@@ -783,17 +749,16 @@ def process_document(
         # --- NER Env Operations ---
         ner_tags_available_for_conllu = False
         if ner_docbin_path_resolved:
-            if not extract_ner_csv(ner_env, ner_docbin_path_resolved, output_csv_ner, logger, **log_context_base):
-                pass # Logged inside, maybe not critical failure
-            if extract_ner_tags_to_file(ner_env, ner_docbin_path_resolved, temp_ner_tags_file, logger, **log_context_base):
+            if not extract_ner_csv(ner_env, ner_docbin_path_resolved, output_csv_ner, logger, **log_context_base): pass
+            if extract_ner_tags_to_file(ner_env, ner_docbin_path_resolved, str(temp_ner_tags_file), logger, **log_context_base):
                 ner_tags_available_for_conllu = True
             else:
-                overall_success = False # Failed to get tags needed for CoNLL-U
+                overall_success = False
         else:
-             if logger: logger.log_operation(**log_context_base, source_file="", destination_file=output_csv_ner, operation_type="extract", file_type="csv-ner", status="skipped", details="NER docbin not found/resolved")
+             if logger: logger.log_operation(**log_context_base, source_file="", destination_file=output_csv_ner, operation_type="extract", file_type="csv-ner", status="skipped", details="NER docbin not resolved")
 
         # --- CoNLL-U Generation (Main Env + NER tags) ---
-        ner_tags_input_path = temp_ner_tags_file if ner_tags_available_for_conllu else None
+        ner_tags_input_path = str(temp_ner_tags_file) if ner_tags_available_for_conllu else None
         if not extract_conllu_file(main_env, main_docbin_path, output_conllu, new_id, ner_tags_input_path, logger, **log_context_base):
              overall_success = False
 
@@ -805,26 +770,26 @@ def process_document(
                 if logger: logger.log_operation(**log_context_base, source_file=source_txt_path, destination_file=dest_original_txt, operation_type="copy", file_type="source_txt", status="success")
             except Exception as e:
                 if logger: logger.log_operation(**log_context_base, source_file=source_txt_path, destination_file=dest_original_txt, operation_type="copy", file_type="source_txt", status="failed", details=str(e))
-                # overall_success = False # Decide if this failure is critical
 
     finally:
         # --- 5. Cleanup Temporary Files ---
-        for temp_file in temp_files_to_clean:
-            if os.path.exists(temp_file):
-                try: os.remove(temp_file)
+        for temp_file_path in temp_files_to_clean:
+            if os.path.exists(temp_file_path):
+                try: os.remove(temp_file_path)
                 except OSError as e:
-                    if logger: logger.log_operation(**log_context_base, source_file=temp_file, destination_file="", operation_type="cleanup", file_type="temp_file", status="failed", details=f"Error: {e}")
+                    if logger: logger.log_operation(**log_context_base, source_file=temp_file_path, destination_file="", operation_type="cleanup", file_type="temp_file", status="failed", details=f"Error: {e}")
 
-    if logger: logger.log_operation(**log_context_base, source_file="", destination_file=output_dir, operation_type="process_end", file_type="document", status="success" if overall_success else "failed", details=f"Finished processing document {old_id} -> {new_id}. Overall success: {overall_success}")
+    if logger: logger.log_operation(**log_context_base, source_file="", destination_file=output_dir, operation_type="process_end", file_type="document", status="success" if overall_success else "failed", details=f"Finished. Success: {overall_success}")
     return overall_success
 
 
 # --- Main Execution ---
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Reorganize corpus documents based on CSV mapping and indices, extracting various formats including CoNLL-U with NER tags.")
+    # Arguments... (same as before)
     parser.add_argument("--mapping-csv", required=True, help="Path to the COMMA-delimited CSV file mapping old 'document_id' to new numeric 'sort_id'.")
-    parser.add_argument("--main-index-csv", required=True, help="Path to the COMMA-delimited CSV index mapping 'document_id' to main DocBin file paths ('processed_path').") # Updated help text
-    parser.add_argument("--ner-index-csv", required=True, help="Path to the COMMA-delimited CSV index mapping 'document_id' to NER DocBin file paths ('processed_path').") # Updated help text
+    parser.add_argument("--main-index-csv", required=True, help="Path to the COMMA-delimited CSV index mapping 'document_id' to main DocBin file paths ('processed_path').")
+    parser.add_argument("--ner-index-csv", required=True, help="Path to the COMMA-delimited CSV index mapping 'document_id' to NER DocBin file paths ('processed_path').")
     parser.add_argument("--base-dir", required=True, help="Path to the base directory containing original source data (e.g., 'cleaned_parsed_data' subdir).")
     parser.add_argument("--output-dir", required=True, help="Path to the base directory where reorganized output will be saved.")
     parser.add_argument("--main-env", required=True, help="Name of the Conda environment containing the main linguistic model (e.g., grc_proiel_trf).")
@@ -836,8 +801,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     start_time = time.time()
-
-    # Initialize Logger (Handles internal errors gracefully)
     logger = FileOperationLogger(
         log_file_path=args.log_file,
         use_wandb=(not args.no_wandb),
@@ -845,19 +808,15 @@ if __name__ == "__main__":
     )
 
     print(f"Starting corpus reorganization process.")
-    # Print config for clarity
     print("-" * 30)
     for arg, value in vars(args).items():
         print(f"{arg:<20}: {value}")
     print("-" * 30)
 
-    if logger.use_wandb:
-         try:
-              wandb.config.update(vars(args)) # Log command line args to wandb config
-         except Exception as e:
-              print(f"!!! Warning: Failed to update wandb config: {e}")
+    if logger.use_wandb and wandb.run:
+         try: wandb.config.update(vars(args))
+         except Exception as e: print(f"!!! Warning: Failed to update wandb config: {e}")
 
-    # Load Mappings and Indices
     print("Loading mappings and indices...")
     mappings = parse_csv_mapping(args.mapping_csv)
     main_index = load_index(args.main_index_csv)
@@ -868,57 +827,69 @@ if __name__ == "__main__":
 
     if not mappings or not main_index:
         print("\nError: Mapping CSV or Main Index CSV could not be loaded or are empty. Exiting.")
-        if logger.use_wandb:
+        if logger.use_wandb and wandb.run:
              try: wandb.finish(exit_code=1)
              except Exception: pass
         exit(1)
 
-    # Process Documents
     processed_count = 0
     failed_count = 0
-    print(f"\nProcessing {len(mappings)} documents...")
+    skipped_count = 0
+    print(f"\nProcessing {len(mappings)} documents listed in mapping file...")
 
     for old_id, new_id in tqdm.tqdm(mappings.items(), desc="Processing Documents", unit="doc"):
-        # Check if main docbin path actually exists before processing
+        processed_count += 1
         main_docbin_path_check = main_index.get(old_id)
-        if not main_docbin_path_check or not os.path.exists(main_docbin_path_check):
-             print(f"\nSkipping {old_id} -> {new_id}: Main DocBin path missing or invalid in index.")
+
+        # --- Skip if main docbin path is missing in index or file doesn't exist ---
+        if not main_docbin_path_check:
+             # print(f"\nSkipping {old_id} -> {new_id}: Not found in main index.") # Reduce noise
              if logger:
                  logger.log_operation(old_id=old_id, new_id=new_id, corpus_prefix=(old_id.split('_')[0] if '_' in old_id else 'unknown'),
-                                      source_file=main_docbin_path_check or "", destination_file="",
-                                      operation_type="process_skip", file_type="document", status="warning",
-                                      details="Main DocBin path missing or invalid in index.")
-             failed_count += 1
-             processed_count += 1 # Count as attempted
-             continue # Skip to next document
+                                      source_file="", destination_file="", operation_type="lookup", file_type="main_docbin", status="skipped",
+                                      details="Not found in main index.")
+             skipped_count += 1
+             continue
+        elif not os.path.exists(main_docbin_path_check):
+             # print(f"\nSkipping {old_id} -> {new_id}: Main DocBin path not found: {main_docbin_path_check}") # Reduce noise
+             if logger:
+                 logger.log_operation(old_id=old_id, new_id=new_id, corpus_prefix=(old_id.split('_')[0] if '_' in old_id else 'unknown'),
+                                      source_file=main_docbin_path_check, destination_file="", operation_type="lookup", file_type="main_docbin", status="skipped",
+                                      details="Path not found on disk.")
+             skipped_count += 1
+             continue
 
-        # Proceed with processing
+        # --- Proceed with processing ---
         success = process_document(
             old_id=old_id, new_id=new_id, base_dir=args.base_dir, output_base_dir=args.output_dir,
             main_index=main_index, ner_index=ner_index, main_env=args.main_env, ner_env=args.ner_env, logger=logger
         )
         if not success:
             failed_count += 1
-        processed_count += 1
 
-    # Completion Summary
+    # --- Completion Summary ---
     end_time = time.time()
     duration = end_time - start_time
+    attempted_processing = processed_count - skipped_count
 
     print("\n" + "-"*30)
     print("--- Reorganization Summary ---")
-    print(f"Total documents attempted: {processed_count}")
-    print(f"Successfully processed: {processed_count - failed_count}")
-    print(f"Failed documents: {failed_count}")
+    print(f"Documents in mapping file: {processed_count}")
+    print(f"Documents skipped (missing main docbin): {skipped_count}")
+    print(f"Documents attempted processing: {attempted_processing}")
+    print(f"-> Successfully processed: {attempted_processing - failed_count}")
+    print(f"-> Failed processing: {failed_count}")
     print(f"Total time taken: {duration:.2f} seconds ({duration/60:.2f} minutes)")
     print("-" * 30)
 
-    # Summarize and close logger (logs final summary to wandb)
     summary_stats = logger.summarize_and_close()
     if logger.log_file_path: print(f"Detailed log saved to: {logger.log_file_path}")
-    if logger.use_wandb:
-        run_url = wandb.run.get_url() if wandb.run else None # Get URL before finish potentially closes run
-        if run_url: print(f"W&B Run URL: {run_url}")
-        else: print("W&B logging was enabled but run URL not available.")
+    if not args.no_wandb: # Check the arg, not logger.use_wandb which might be false due to init error
+        if wandb.run:
+             run_url = wandb.run.get_url()
+             if run_url: print(f"W&B Run URL: {run_url}")
+             else: print("W&B logging was enabled but run URL not available (run might have finished).")
+        else:
+             print("W&B logging was enabled but no active run found.")
 
     print("\nScript finished.")
