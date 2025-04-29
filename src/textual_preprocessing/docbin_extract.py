@@ -645,35 +645,45 @@ if __name__ == "__main__":
     executor = None; pbar = None
     setup_graceful_shutdown()
 
-    try:
+    try: # <--- Start of outer try block
         if args.num_workers > 1 and processed_count > 0 :
             script_logger.info(f"Starting parallel processing with {args.num_workers} workers.")
             pbar = tqdm.tqdm(total=processed_count, desc="Processing Docs", unit="doc", dynamic_ncols=True)
+            # The 'with ProcessPoolExecutor...' handles its own cleanup
             with ProcessPoolExecutor(max_workers=args.num_workers) as executor:
-                _executor_ref = executor
+                _executor_ref = executor # Make available to signal handler
+                # No separate try needed here for signal setup, done outside
                 futures = {executor.submit(process_document_wrapper, task): task for task in tasks}
                 for future in as_completed(futures):
                     task_info = futures[future]; task_id_str = f"{task_info.get('old_id','?')}->{task_info.get('new_id','?')}"
                     if _shutdown_requested: break
-                    try: success, final_status_msg = future.result();
-                         if not success: failed_count += 1
-                         pbar.set_postfix_str(f"Last: {task_id_str}, Status: {final_status_msg}", refresh=True)
-                    except Exception as exc: script_logger.error(f'Task {task_id_str} generated exception: {exc}'); traceback.print_exc(); failed_count += 1; pbar.set_postfix_str(f"Last: {task_id_str}, Status: Exception", refresh=True)
-                    finally: pbar.update(1)
-            _executor_ref = None # Clear before implicit shutdown
-        else:
+                    try: # Inner try for result processing
+                        success, final_status_msg = future.result();
+                        if not success: failed_count += 1 # Correctly indented inside inner try
+                        pbar.set_postfix_str(f"Last: {task_id_str}, Status: {final_status_msg}", refresh=True)
+                    except Exception as exc: # Correctly indented except for inner try
+                        script_logger.error(f'Task {task_id_str} generated exception: {exc}'); traceback.print_exc(); failed_count += 1; pbar.set_postfix_str(f"Last: {task_id_str}, Status: Exception", refresh=True)
+                    finally: # Correctly indented finally for inner try
+                         pbar.update(1)
+            _executor_ref = None # Clear ref after pool closes naturally
+
+        else: # Sequential processing
             script_logger.info("Starting sequential processing.")
             pbar = tqdm.tqdm(tasks, desc="Processing Docs", unit="doc", dynamic_ncols=True)
             for task in pbar:
                 if _shutdown_requested: script_logger.warning("Shutdown requested, stopping."); break
                 task_id_str = f"{task.get('old_id','?')}->{task.get('new_id','?')}"; pbar.set_postfix_str(f"Current: {task_id_str}", refresh=False)
                 success, final_status_msg = process_document_wrapper(task)
-                if not success: failed_count += 1
+                if not success: failed_count += 1 # Correctly indented inside loop
                 pbar.set_postfix_str(f"Last: {task_id_str}, Status: {final_status_msg}", refresh=True)
-    except KeyboardInterrupt: script_logger.warning("KeyboardInterrupt received. Exiting.")
-        if _executor_ref: _executor_ref.shutdown(wait=False, cancel_futures=True)
-    finally:
-        if pbar: pbar.close()
+
+    except KeyboardInterrupt: # <--- Correctly indented except for outer try
+        script_logger.warning("KeyboardInterrupt received. Exiting.")
+        if _executor_ref: # If parallel pool was active
+            script_logger.info("Attempting to cancel pending tasks...")
+            _executor_ref.shutdown(wait=False, cancel_futures=True)
+    finally: # <--- Correctly indented finally for outer try
+        if pbar: pbar.close() # Ensure progress bar is closed
 
     # --- Run Mismatch Summary ---
     if processed_count > 0: # Only summarize if files were likely created
