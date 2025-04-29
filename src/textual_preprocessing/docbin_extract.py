@@ -169,7 +169,7 @@ class FileOperationLogger:
     def summarize_and_close(self) -> Dict[str, Any]:
         total_operations = len(self.log_entries); status_counts = {'success': 0, 'failed': 0, 'warning': 0, 'info': 0, 'skipped': 0}; operation_counts = {}; file_type_counts = {}; unique_old_ids = set(); unique_new_ids = set()
         for entry in self.log_entries: status_counts[entry['status']] = status_counts.get(entry['status'], 0) + 1; op_type = entry['operation_type']; operation_counts[op_type] = operation_counts.get(op_type, 0) + 1; file_type = entry['file_type']; file_type_counts[file_type] = file_type_counts.get(file_type, 0) + 1;
-            if entry['operation_type'] == 'process_start': unique_old_ids.add(entry['old_id']); unique_new_ids.add(entry['new_id'])
+        if entry['operation_type'] == 'process_start': unique_old_ids.add(entry['old_id']); unique_new_ids.add(entry['new_id'])
         successful_operations = status_counts.get('success', 0); failed_operations = status_counts.get('failed', 0); warning_operations = status_counts.get('warning', 0); relevant_ops_for_rate = successful_operations + failed_operations; success_rate = successful_operations / relevant_ops_for_rate if relevant_ops_for_rate > 0 else 0
         summary = {'total_operations': total_operations,'successful_operations': successful_operations,'failed_operations': failed_operations,'warning_operations': warning_operations,'other_status_operations': sum(v for k, v in status_counts.items() if k not in ['success', 'failed', 'warning']),'operation_counts': operation_counts,'file_type_counts': file_type_counts,'unique_documents_processed': len(unique_old_ids),'unique_new_ids_created': len(unique_new_ids),'success_rate': success_rate,}
         if self.use_wandb and wandb.run:
