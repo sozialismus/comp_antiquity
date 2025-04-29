@@ -656,15 +656,20 @@ if __name__ == "__main__":
                 futures = {executor.submit(process_document_wrapper, task): task for task in tasks}
                 for future in as_completed(futures):
                     task_info = futures[future]; task_id_str = f"{task_info.get('old_id','?')}->{task_info.get('new_id','?')}"
-                    if _shutdown_requested: break
+                    if _shutdown_requested: break # Stop processing new results on shutdown signal
+                    # --- FIX: Correct try/except/finally structure ---
                     try: # Inner try for result processing
                         success, final_status_msg = future.result();
-                        if not success: failed_count += 1 # Correctly indented inside inner try
+                        if not success: failed_count += 1 # Check success if result() didn't raise exception
                         pbar.set_postfix_str(f"Last: {task_id_str}, Status: {final_status_msg}", refresh=True)
-                    except Exception as exc: # Correctly indented except for inner try
-                        script_logger.error(f'Task {task_id_str} generated exception: {exc}'); traceback.print_exc(); failed_count += 1; pbar.set_postfix_str(f"Last: {task_id_str}, Status: Exception", refresh=True)
-                    finally: # Correctly indented finally for inner try
+                    except Exception as exc: # Catch exceptions from the worker OR future.result()
+                         script_logger.error(f'Task {task_id_str} generated exception: {exc}')
+                         traceback.print_exc()
+                         failed_count += 1
+                         pbar.set_postfix_str(f"Last: {task_id_str}, Status: Exception", refresh=True)
+                    finally: # Ensure pbar update happens always
                          pbar.update(1)
+                    # --- END FIX ---
             _executor_ref = None # Clear ref after pool closes naturally
 
         else: # Sequential processing
