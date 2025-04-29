@@ -150,7 +150,10 @@ class FileOperationLogger:
             try:
                 wandb.init(project=wandb_project, name=self.run_name)
                 wandb.config.update({"log_file_intended": log_file_path,"log_file_actual": self.log_file_path if self.log_file_path else "N/A","start_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
-                self.logger.info(f"WandB logging initialized for run: {wandb.run.name} (URL: {wandb.run.get_url() if wandb.run else 'N/A'})")
+                # --- FIX: Use wandb.run.url attribute ---
+                run_url = wandb.run.url if wandb.run else 'N/A' # Get attribute safely
+                self.logger.info(f"WandB logging initialized for run: {wandb.run.name} (URL: {run_url})")
+                # --- END FIX ---
             except Exception as e: self.logger.error(f"Error initializing wandb: {e}. Wandb logging disabled."); self.use_wandb = False
 
     def log_operation(self, status: str = "success", details: str = "", **log_ctx) -> None:
@@ -204,54 +207,72 @@ class FileOperationLogger:
 
 
 # --- Extraction Functions ---
-@timed_operation("extract_main_outputs") # Profile this function
+@timed_operation("extract_main_outputs")
 def extract_main_model_outputs(
-    conda_env: str, docbin_path: str, output_txt_joined: str, output_txt_fullstop: str,
-    output_csv_lemma: str, output_csv_upos: str, output_csv_stop: str, output_csv_dot: str,
-    output_conllu: str, ner_tags_path: Optional[str], doc_id_str: str,
-    logger: Optional['FileOperationLogger'] = None, **log_ctx
+    conda_env: str,
+    docbin_path: str,
+    output_txt_joined: str,
+    output_txt_fullstop: str,
+    output_csv_lemma: str,
+    output_csv_upos: str,
+    output_csv_stop: str,
+    output_csv_dot: str,
+    output_conllu: str,
+    ner_tags_path: Optional[str],
+    doc_id_str: str,
+    logger: Optional['FileOperationLogger'] = None,
+    **log_ctx
 ) -> bool:
     """Loads main model once and extracts all related outputs via one temp script."""
-    script_content = f"""# -*- coding: utf-8 -*-
-import sys, csv, spacy, os, traceback, re; from spacy.tokens import DocBin
-docbin_path = r'{docbin_path}'; output_txt_joined = r'{output_txt_joined}'; output_txt_fullstop = r'{output_txt_fullstop}'; output_csv_lemma = r'{output_csv_lemma}'; output_csv_upos = r'{output_csv_upos}'; output_csv_stop = r'{output_csv_stop}'; output_csv_dot = r'{output_csv_dot}'; output_conllu = r'{output_conllu}'; ner_tags_path = {repr(ner_tags_path)}; doc_id_str = '{doc_id_str}'
-dirs_to_check = set([os.path.dirname(p) for p in [output_txt_joined, output_txt_fullstop, output_csv_lemma, output_csv_upos, output_csv_stop, output_csv_dot, output_conllu]])
+    # Note: Compacted the script content for clarity below, ensure all imports etc. are correct
+    script_content = f"""
+# -*- coding: utf-8 -*-
+import sys, csv, spacy, os, traceback, re
+from spacy.tokens import DocBin
+docbin_path=r'{docbin_path}'; output_txt_joined=r'{output_txt_joined}'; output_txt_fullstop=r'{output_txt_fullstop}'; output_csv_lemma=r'{output_csv_lemma}'; output_csv_upos=r'{output_csv_upos}'; output_csv_stop=r'{output_csv_stop}'; output_csv_dot=r'{output_csv_dot}'; output_conllu=r'{output_conllu}'; ner_tags_path={repr(ner_tags_path)}; doc_id_str='{doc_id_str}'
+dirs_to_check=set([os.path.dirname(p) for p in [output_txt_joined,output_txt_fullstop,output_csv_lemma,output_csv_upos,output_csv_stop,output_csv_dot,output_conllu]])
 for d in dirs_to_check:
     if d: os.makedirs(d, exist_ok=True)
 try:
     nlp = spacy.load('grc_proiel_trf'); doc_bin = DocBin().from_disk(docbin_path); docs = list(doc_bin.get_docs(nlp.vocab)); assert docs, f"DocBin empty: {{docbin_path}}"
     doc = docs[0]; num_tokens = len(doc)
     doc_text = doc.text
-    with open(output_txt_joined, 'w', encoding='utf-8') as f: f.write(doc_text)
+    with open(output_txt_joined,'w',encoding='utf-8') as f: f.write(doc_text)
     try:
-        text_fs = re.sub(r'\.(?!\.)', '.\\n', doc_text); text_fs = re.sub(r'\s+\\n', '\\n', text_fs); text_fs = re.sub(r'\\n\s+', '\\n', text_fs).strip()
-        with open(output_txt_fullstop, 'w', encoding='utf-8') as f: f.write(text_fs)
-    except Exception as fs_e: print(f"Warning: Failed fullstop: {{fs_e}}", file=sys.stderr)
-    with open(output_csv_lemma, 'w', encoding='utf-8', newline='') as fl,open(output_csv_upos, 'w', encoding='utf-8', newline='') as fu,open(output_csv_stop, 'w', encoding='utf-8', newline='') as fs,open(output_csv_dot, 'w', encoding='utf-8', newline='') as fd:
-        wl=csv.writer(fl, quoting=csv.QUOTE_ALL); wl.writerow(['ID','TOKEN','LEMMA']); wu=csv.writer(fu, quoting=csv.QUOTE_ALL); wu.writerow(['ID','TOKEN','UPOS']); ws=csv.writer(fs, quoting=csv.QUOTE_ALL); ws.writerow(['ID','TOKEN','IS_STOP']); wd=csv.writer(fd, quoting=csv.QUOTE_ALL); wd.writerow(['ID','TOKEN','IS_PUNCT'])
+        tfs = re.sub(r'\.(?!\.)', '.\\n', doc_text); tfs = re.sub(r'\s+\\n','\\n', tfs); tfs = re.sub(r'\\n\s+', '\\n', tfs).strip()
+        with open(output_txt_fullstop,'w',encoding='utf-8') as f: f.write(tfs)
+    except Exception as fs_e: print(f"Warn: Fail fullstop: {{fs_e}}", file=sys.stderr)
+    with open(output_csv_lemma,'w',encoding='utf-8',newline='') as fl,open(output_csv_upos,'w',encoding='utf-8',newline='') as fu,open(output_csv_stop,'w',encoding='utf-8',newline='') as fs,open(output_csv_dot,'w',encoding='utf-8',newline='') as fd:
+        wl=csv.writer(fl,quoting=csv.QUOTE_ALL); wl.writerow(['ID','TOKEN','LEMMA']); wu=csv.writer(fu,quoting=csv.QUOTE_ALL); wu.writerow(['ID','TOKEN','UPOS']); ws=csv.writer(fs,quoting=csv.QUOTE_ALL); ws.writerow(['ID','TOKEN','IS_STOP']); wd=csv.writer(fd,quoting=csv.QUOTE_ALL); wd.writerow(['ID','TOKEN','IS_PUNCT'])
         for i,t in enumerate(doc): tid,ttxt=i+1,str(t.text); wl.writerow([tid,ttxt,t.lemma_]); wu.writerow([tid,ttxt,t.pos_]); ws.writerow([tid,ttxt,'TRUE' if t.is_stop else 'FALSE']); wd.writerow([tid,ttxt,'TRUE' if t.is_punct else 'FALSE'])
     ner_tags = None
     if ner_tags_path and os.path.exists(ner_tags_path):
         try:
-            with open(ner_tags_path, 'r', encoding='utf-8') as f_ner: ner_tags = [ln.strip() for ln in f_ner if ln.strip()]
-            if len(ner_tags)!=num_tokens: print(f"Warn(doc{{doc_id_str}}):Mismatch tok({{num_tokens}})/NER({{len(ner_tags)}}).",file=sys.stderr)
+            with open(ner_tags_path,'r',encoding='utf-8') as fn: ntgs=[ln.strip() for ln in fn if ln.strip()]
+            if len(ntgs)!=num_tokens: print(f"Warn(doc{{doc_id_str}}):Mismatch tok({{num_tokens}})/NER({{len(ntgs)}}).",file=sys.stderr)
+            ner_tags = ntgs # Assign if read successfully
         except Exception as e: print(f"Warn(doc{{doc_id_str}}):Fail read NER tags:{{e}}.",file=sys.stderr); ner_tags=None
     elif ner_tags_path: print(f"Warn(doc{{doc_id_str}}):NER tags path not found:{{ner_tags_path}}.",file=sys.stderr)
-    with open(output_conllu,"w",encoding="utf-8") as f_out:
-        f_out.write(f"# newdoc id = {{doc_id_str}}\\n"); sent_id_counter = 1
+    with open(output_conllu,"w",encoding="utf-8") as fo:
+        fo.write(f"# newdoc id = {{doc_id_str}}\\n"); sidc = 1
         for sent in doc.sents:
-            stc=sent.text.replace('\\n',' ').replace('\\r',''); f_out.write(f"# sent_id={{doc_id_str}}-{{sent_id_counter}}\\n"); f_out.write(f"# text={{stc}}\\n")
+            stc=sent.text.replace('\\n',' ').replace('\\r',''); fo.write(f"# sent_id={{doc_id_str}}-{{sidc}}\\n"); fo.write(f"# text={{stc}}\\n")
             tsic=1
             for t in sent:
-                hid=t.head.i-sent.start+1 if t.head.i!=t.i else 0; fts=str(t.morph) if t.morph and str(t.morph).strip() else "_"; mp=[]
+                hid=t.head.i-sent.start+1 if t.head.i!=t.i else 0; fts=str(t.morph) if t.morph and str(t.morph).strip() else "_"
+                mp=[]
                 if ner_tags:
-                    try: nt=ner_tags[t.i];
-                         if nt and nt!='O': mp.append(f"NER={{nt}}")
-                    except IndexError: pass
+                    # --- FIX: Ensure try...except is correctly structured ---
+                    try:
+                        nt=ner_tags[t.i]
+                        if nt and nt!='O': mp.append(f"NER={{nt}}")
+                    except IndexError:
+                        pass # Correctly placed except block
+                    # --- END FIX ---
                 if t.i+1<num_tokens and doc[t.i+1].idx==t.idx+len(t.text): mp.append("SpaceAfter=No")
                 mf="|".join(mp) if mp else "_"; dpf="_"; dpr=str(t.dep_) if t.dep_ and t.dep_.strip() else "dep"
-                cols=[str(tsic),str(t.text),str(t.lemma_),str(t.pos_),str(t.tag_),fts,str(hid),dpr,dpf,mf]; f_out.write("\\t".join(cols)+"\\n"); tsic+=1
-            f_out.write("\\n"); sent_id_counter+=1
+                cols=[str(tsic),str(t.text),str(t.lemma_),str(t.pos_),str(t.tag_),fts,str(hid),dpr,dpf,mf]; fo.write("\\t".join(cols)+"\\n"); tsic+=1
+            fo.write("\\n"); sidc+=1
 except Exception as e: print(f"Error: {{e}}",file=sys.stderr); traceback.print_exc(file=sys.stderr); sys.exit(1)"""
     log_ctx.update({'source_file': docbin_path, 'destination_file': f"Multiple files in {os.path.dirname(output_txt_joined)} and {os.path.dirname(output_csv_lemma)}", 'file_type': 'main-model-outputs'})
     return run_python_script_in_conda_env(conda_env, script_content, log_ctx, logger, timeout=900)
@@ -262,24 +283,60 @@ def extract_ner_model_outputs(
     logger: Optional['FileOperationLogger'] = None, **log_ctx
 ) -> bool:
     """Loads NER model once and extracts NER CSV and NER tags file via one temp script."""
-    script_content = f"""# -*- coding: utf-8 -*-
-import sys, csv, spacy, os, traceback; from spacy.tokens import DocBin
-docbin_path = r'{docbin_path}'; output_csv_ner = r'{output_csv_ner}'; output_ner_tags = r'{output_ner_tags}'
-dirs_to_check = set([os.path.dirname(output_csv_ner), os.path.dirname(output_ner_tags)])
+    script_content = f"""
+# -*- coding: utf-8 -*-
+import sys, csv, spacy, os, traceback, re
+from spacy.tokens import DocBin
+docbin_path=r'{docbin_path}'; output_txt_joined=r'{output_txt_joined}'; output_txt_fullstop=r'{output_txt_fullstop}'; output_csv_lemma=r'{output_csv_lemma}'; output_csv_upos=r'{output_csv_upos}'; output_csv_stop=r'{output_csv_stop}'; output_csv_dot=r'{output_csv_dot}'; output_conllu=r'{output_conllu}'; ner_tags_path={repr(ner_tags_path)}; doc_id_str='{doc_id_str}'
+dirs_to_check=set([os.path.dirname(p) for p in [output_txt_joined,output_txt_fullstop,output_csv_lemma,output_csv_upos,output_csv_stop,output_csv_dot,output_conllu]])
 for d in dirs_to_check:
     if d: os.makedirs(d, exist_ok=True)
 try:
-    nlp = spacy.load('grc_ner_trf'); doc_bin = DocBin().from_disk(docbin_path); docs = list(doc_bin.get_docs(nlp.vocab)); assert docs, f"DocBin empty: {{docbin_path}}"
-    doc = docs[0]
-    print(f"DEBUG NER combined: Doc ID {log_ctx.get('old_id', '?')}->{log_ctx.get('new_id', '?')}", file=sys.stderr) # Added log ctx info
-    print(f"DEBUG NER combined: Loaded '{os.path.basename(docbin_path)}'. Found {{len(doc.ents)}} entities.", file=sys.stderr)
-    with open(output_csv_ner, 'w', encoding='utf-8', newline='') as csvfile:
-        writer = csv.writer(csvfile, quoting=csv.QUOTE_ALL); writer.writerow(['ID', 'TOKEN', 'NER'])
-        for i, token in enumerate(doc): writer.writerow([i + 1, str(token.text), token.ent_type_ if token.ent_type_ else 'O'])
-    with open(output_ner_tags, 'w', encoding='utf-8') as f: f.write('\\n'.join([token.ent_type_ if token.ent_type_ else 'O' for token in doc]))
-except Exception as e: print(f"Error: {{e}}", file=sys.stderr); traceback.print_exc(file=sys.stderr); sys.exit(1)"""
-    log_ctx.update({'source_file': docbin_path, 'destination_file': f"{os.path.basename(output_csv_ner)} & {os.path.basename(output_ner_tags)}", 'file_type': 'ner-model-outputs'})
-    return run_python_script_in_conda_env(conda_env, script_content, log_ctx, logger, timeout=600)
+    nlp = spacy.load('grc_proiel_trf'); doc_bin = DocBin().from_disk(docbin_path); docs = list(doc_bin.get_docs(nlp.vocab)); assert docs, f"DocBin empty: {{docbin_path}}"
+    doc = docs[0]; num_tokens = len(doc)
+    doc_text = doc.text
+    with open(output_txt_joined,'w',encoding='utf-8') as f: f.write(doc_text)
+    try:
+        tfs = re.sub(r'\.(?!\.)', '.\\n', doc_text); tfs = re.sub(r'\s+\\n','\\n', tfs); tfs = re.sub(r'\\n\s+', '\\n', tfs).strip()
+        with open(output_txt_fullstop,'w',encoding='utf-8') as f: f.write(tfs)
+    except Exception as fs_e: print(f"Warn: Fail fullstop: {{fs_e}}", file=sys.stderr)
+    with open(output_csv_lemma,'w',encoding='utf-8',newline='') as fl,open(output_csv_upos,'w',encoding='utf-8',newline='') as fu,open(output_csv_stop,'w',encoding='utf-8',newline='') as fs,open(output_csv_dot,'w',encoding='utf-8',newline='') as fd:
+        wl=csv.writer(fl,quoting=csv.QUOTE_ALL); wl.writerow(['ID','TOKEN','LEMMA']); wu=csv.writer(fu,quoting=csv.QUOTE_ALL); wu.writerow(['ID','TOKEN','UPOS']); ws=csv.writer(fs,quoting=csv.QUOTE_ALL); ws.writerow(['ID','TOKEN','IS_STOP']); wd=csv.writer(fd,quoting=csv.QUOTE_ALL); wd.writerow(['ID','TOKEN','IS_PUNCT'])
+        for i,t in enumerate(doc): tid,ttxt=i+1,str(t.text); wl.writerow([tid,ttxt,t.lemma_]); wu.writerow([tid,ttxt,t.pos_]); ws.writerow([tid,ttxt,'TRUE' if t.is_stop else 'FALSE']); wd.writerow([tid,ttxt,'TRUE' if t.is_punct else 'FALSE'])
+    ner_tags = None
+    if ner_tags_path and os.path.exists(ner_tags_path):
+        try:
+            with open(ner_tags_path,'r',encoding='utf-8') as fn: ntgs=[ln.strip() for ln in fn if ln.strip()]
+            if len(ntgs)!=num_tokens: print(f"Warn(doc{{doc_id_str}}):Mismatch tok({{num_tokens}})/NER({{len(ntgs)}}).",file=sys.stderr)
+            ner_tags = ntgs # Assign if read successfully
+        except Exception as e: print(f"Warn(doc{{doc_id_str}}):Fail read NER tags:{{e}}.",file=sys.stderr); ner_tags=None
+    elif ner_tags_path: print(f"Warn(doc{{doc_id_str}}):NER tags path not found:{{ner_tags_path}}.",file=sys.stderr)
+    with open(output_conllu,"w",encoding="utf-8") as fo:
+        fo.write(f"# newdoc id = {{doc_id_str}}\\n"); sidc = 1
+        for sent in doc.sents:
+            stc=sent.text.replace('\\n',' ').replace('\\r',''); fo.write(f"# sent_id={{doc_id_str}}-{{sidc}}\\n"); fo.write(f"# text={{stc}}\\n")
+            tsic=1
+            for t in sent:
+                hid=t.head.i-sent.start+1 if t.head.i!=t.i else 0; fts=str(t.morph) if t.morph and str(t.morph).strip() else "_"
+                mp=[]
+                if ner_tags:
+                    # --- CORRECTED try...except block ---
+                    try:
+                        nt=ner_tags[t.i]
+                        if nt and nt!='O': mp.append(f"NER={{nt}}")
+                    except IndexError:
+                        # This token's index is out of bounds for ner_tags.
+                        # Log it once per document maybe? Or just pass silently.
+                        # print(f"Warn(doc{{doc_id_str}}): IndexError accessing ner_tags for token {{t.i}}.", file=sys.stderr) # Optional: More verbose warning
+                        pass # Silently skip adding NER tag for this token
+                    # --- END CORRECTION ---
+                if t.i+1<num_tokens and doc[t.i+1].idx==t.idx+len(t.text): mp.append("SpaceAfter=No")
+                mf="|".join(mp) if mp else "_"; dpf="_"; dpr=str(t.dep_) if t.dep_ and t.dep_.strip() else "dep"
+                cols=[str(tsic),str(t.text),str(t.lemma_),str(t.pos_),str(t.tag_),fts,str(hid),dpr,dpf,mf]; fo.write("\\t".join(cols)+"\\n"); tsic+=1
+            fo.write("\\n"); sidc+=1
+except Exception as e: print(f"Error: {{e}}",file=sys.stderr); traceback.print_exc(file=sys.stderr); sys.exit(1)"""
+    log_ctx.update({'source_file': docbin_path, 'destination_file': f"Multiple files in {os.path.dirname(output_txt_joined)} and {os.path.dirname(output_csv_lemma)}", 'file_type': 'main-model-outputs'})
+    return run_python_script_in_conda_env(conda_env, script_content, log_ctx, logger, timeout=900)
 
 
 # --- Helper Functions ---
