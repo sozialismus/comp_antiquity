@@ -208,11 +208,15 @@ docbin_path=r'{docbin_path}'; output_txt_joined=r'{output_txt_joined}'; output_t
 
 # --- Alignment Function (Included from your suggestion) ---
 def attempt_ner_alignment(tokens, ner_tags):
-    token_texts = [str(t.text) for t in tokens]
-    # Using SequenceMatcher to find longest common subsequences as blocks
+    print(f"DEBUG ALIGN: Entering attempt_ner_alignment for doc {{doc_id_str}}. len(tokens)={{len(tokens)}}, len(ner_tags)={{len(ner_tags)}}", file=sys.stderr)
+    token_texts = [str(t.text) for t in tokens] # Define token_texts
+    print(f"DEBUG ALIGN: Defined token_texts, length: {{len(token_texts)}}", file=sys.stderr)
     matcher = SequenceMatcher(None, token_texts, ner_tags, autojunk=False)
     aligned_tags = [None] * len(tokens)
-    alignment_stats = {{'status': 'failed_no_matches', 'aligned_count': 0, 'total_tokens': len(tokens), 'total_ner_tags': len(ner_tags), 'success_rate': 0.0, 'details':[]}}
+    # --- FIX: Initialize mismatch_details ---
+    mismatch_details = []
+    # --- END FIX ---
+    alignment_stats = {{'status': 'failed_no_matches', 'aligned_count': 0, 'total_tokens': len(tokens), 'total_ner_tags': len(ner_tags), 'success_rate': 0.0, 'details': mismatch_details}} # Use list ref
     blocks_processed = 0
 
     for block in matcher.get_matching_blocks():
@@ -220,11 +224,16 @@ def attempt_ner_alignment(tokens, ner_tags):
         blocks_processed += 1
         token_start, ner_start, size = block
         for i in range(size):
-            aligned_tags[token_start + i] = ner_tags[ner_start + i]
-            alignment_stats['aligned_count'] += 1
-            # Log limited details
-            if len(alignment_stats['details']) < 10:
-                 alignment_stats['details'].append(f"Align: tok[{{token_start+i}}]='{token_texts[token_start+i]}' <-> tag[{{ner_start+i}}]='{ner_tags[ner_start+i]}'")
+            # Check bounds just in case SequenceMatcher gives odd results
+            if (token_start + i) < len(aligned_tags) and (ner_start + i) < len(ner_tags):
+                 aligned_tags[token_start + i] = ner_tags[ner_start + i]
+                 alignment_stats['aligned_count'] += 1
+                 # Log limited details
+                 if len(mismatch_details) < 10:
+                     # Also check bounds for token_texts access
+                     token_text_safe = token_texts[token_start+i] if (token_start+i) < len(token_texts) else "TOKEN_OOB"
+                     ner_tag_safe = ner_tags[ner_start+i] # Should be safe due to loop range
+                     mismatch_details.append(f"Align: tok[{{token_start+i}}]='{token_text_safe}' <-> tag[{{ner_start+i}}]='{ner_tag_safe}'")
 
     if alignment_stats['aligned_count'] > 0:
          alignment_stats['success_rate'] = alignment_stats['aligned_count'] / len(tokens) if tokens else 0
@@ -249,7 +258,7 @@ try:
     doc_text = doc.text
     with open(output_txt_joined,'w',encoding='utf-8') as f: f.write(doc_text)
     try:
-        # Fixed escape sequence warning
+        # Fixed escape sequence warning using double backslash
         tfs = re.sub(r'\\.(?!\\.)', '.\\n', doc_text); tfs = re.sub(r'\s+\\n','\\n', tfs); tfs = re.sub(r'\\n\s+', '\\n', tfs).strip()
         with open(output_txt_fullstop,'w',encoding='utf-8') as f: f.write(tfs)
     except Exception as fs_e: print(f"Warn: Fail fullstop: {{fs_e}}", file=sys.stderr)
@@ -265,7 +274,7 @@ try:
             if len(original_ner_tags) != num_tokens:
                 mismatch_detected = True
                 print(f"WARN(doc{{doc_id_str}}):Tok/NER mismatch! Main:{{num_tokens}} NER:{{len(original_ner_tags)}}. Attempting alignment.", file=sys.stderr)
-                aligned_result, alignment_info = attempt_ner_alignment(doc, original_ner_tags)
+                aligned_result, alignment_info = attempt_ner_alignment(doc, original_ner_tags) # Call alignment
                 if aligned_result: ner_tags_to_use = aligned_result
                 else: ner_tags_to_use = None; print(f"WARN(doc{{doc_id_str}}):Alignment failed/discarded, NER tags omitted from CoNLL-U.", file=sys.stderr)
             else: ner_tags_to_use = original_ner_tags # Counts match
@@ -286,8 +295,15 @@ try:
                 hid=t.head.i-sent.start+1 if t.head.i!=t.i else 0; fts=str(t.morph) if t.morph and str(t.morph).strip() else "_"
                 mp=[]
                 if ner_tags_to_use: # Use potentially aligned or original tags
-                    nt = ner_tags_to_use[t.i] # Access using token index; will be None if unaligned
-                    if nt and nt!='O': mp.append(f"NER={{nt}}")
+                    # Check index bounds BEFORE accessing ner_tags_to_use
+                    if t.i < len(ner_tags_to_use):
+                        nt = ner_tags_to_use[t.i] # Access using token index; will be None if unaligned
+                        if nt and nt!='O': mp.append(f"NER={{nt}}")
+                    else:
+                         # This case should ideally not happen if alignment produces a list of len(doc)
+                         # but added as safety belt.
+                         print(f"WARN(doc{{doc_id_str}}): Token index {{t.i}} out of bounds for ner_tags_to_use (len={{len(ner_tags_to_use)}})", file=sys.stderr)
+
                 if t.i+1<num_tokens and doc[t.i+1].idx==t.idx+len(t.text): mp.append("SpaceAfter=No")
                 mf="|".join(mp) if mp else "_"; dpf="_"; dpr=str(t.dep_) if t.dep_ and t.dep_.strip() else "dep"
                 cols=[str(tsic),str(t.text),str(t.lemma_),str(t.pos_),str(t.tag_),fts,str(hid),dpr,dpf,mf]; fo.write("\\t".join(cols)+"\\n"); tsic+=1
@@ -303,7 +319,7 @@ try:
 
 except Exception as e: print(f"Error: {{e}}",file=sys.stderr); traceback.print_exc(file=sys.stderr); sys.exit(1)"""
     log_ctx.update({'source_file': docbin_path, 'destination_file': f"Multiple files in {os.path.dirname(output_txt_joined)} and {os.path.dirname(output_csv_lemma)}", 'file_type': 'main-model-outputs'})
-    return run_python_script_in_conda_env(conda_env, script_content, log_ctx, logger, timeout=1200) # Increased timeout
+    return run_python_script_in_conda_env(conda_env, script_content, log_ctx, logger, timeout=1200)
 
 # Integrates your enhanced NER model extraction
 @timed_operation("extract_ner_outputs")
