@@ -356,7 +356,6 @@ class FileOperationLogger:
 
 
 # Integrates your enhanced main model extraction logic
-# Integrates your enhanced main model extraction logic
 @timed_operation("extract_main_outputs")
 def extract_main_model_outputs(
     conda_env: str, docbin_path: str, output_txt_joined: str, output_txt_fullstop: str,
@@ -1447,22 +1446,48 @@ if __name__ == "__main__":
     if processed_count > 0: script_logger.info("--- Generating Token Mismatch Summary ---"); summarize_token_mismatches(args.output_dir, logger)
     else: script_logger.info("Skipping mismatch summary as no documents were processed.")
 
-    # --- Final Summary Logging --- (Keep as is)
+    # --- Final Summary Logging ---
     end_time = time.time(); duration = end_time - start_time
-    attempted_processing = processed_count
-    summary_msg = ( # ... (Construct summary message) ...
+    attempted_processing = processed_count # Clarity: number of tasks submitted
+
+    # Correct construction of the multi-line f-string summary
+    summary_msg = (
+        "\n" + "=" * 60 +
+        "\n--- Reorganization Summary ---" +
+        f"\nTotal documents in mapping file: {len(mappings)}" +
+        f"\nDocuments skipped (missing/invalid main index/docbin): {skipped_missing_index}" +
+        f"\nDocuments skipped (outputs exist, overwrite=False): {skipped_already_complete}" +
+        f"\n----------------------------------" +
+        f"\nDocuments submitted for processing: {attempted_processing}" +
+        # Note: No trailing '+' or '#' on these lines within the parentheses
         f"\n  -> Successfully processed: {attempted_processing - failed_count}" +
-        f"\n  -> Failed processing: {failed_count}" + # ...
-    )
-    script_logger.info(summary_msg); print(summary_msg)
+        f"\n  -> Failed processing: {failed_count}" +
+        f"\n----------------------------------" +
+        f"\nTotal execution time: {duration:.2f} seconds ({duration/60:.2f} minutes)" +
+        "\n" + "=" * 60
+    ) # The parentheses close the multi-line string construction
+
+    script_logger.info(summary_msg); print(summary_msg) # Print to console as well
+
+    # Finalize logging (writes summary, uploads artifacts, closes wandb)
     summary_stats = logger.summarize_and_close()
 
-    # --- Log final messages --- (Keep as is)
-    if logger.log_file_path and os.path.exists(logger.log_file_path): script_logger.info(f"Detailed CSV log saved to: {logger.log_file_path}")
-    elif args.log_file: script_logger.warning(f"CSV log file was intended for {args.log_file} but may not have been created.")
+    # Provide final pointers to logs
+    if logger.log_file_path and os.path.exists(logger.log_file_path):
+        script_logger.info(f"Detailed CSV log saved to: {logger.log_file_path}")
+    elif args.log_file:
+         script_logger.warning(f"CSV log file was intended for {args.log_file} but may not have been created due to errors.")
+
     if not args.no_wandb:
-        wandb_url = summary_stats.get('wandb_run_url')
-        if wandb_url: script_logger.info(f"W&B Run URL: {wandb_url}")
-        elif logger.use_wandb: script_logger.info("W&B logging was enabled but run may have ended or failed to initialize.")
-        else: script_logger.info("W&B logging was disabled.")
+        # Check if wandb run URL exists in the final summary (may not if init failed)
+        wandb_url = summary_stats.get('wandb_run_url', None) # Assuming logger adds this
+        if wandb_url:
+            script_logger.info(f"W&B Run URL: {wandb_url}")
+        elif logger.use_wandb: # Check if it was intended but failed
+            script_logger.info("W&B logging was enabled but run may have ended or failed to initialize.")
+        else:
+            script_logger.info("W&B logging was disabled.")
+
     script_logger.info("Script finished."); print("\nScript finished.")
+    # Optional: Exit with non-zero code if there were failures
+    # sys.exit(1 if failed_count > 0 else 0)
