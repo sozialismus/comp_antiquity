@@ -433,9 +433,14 @@ def attempt_ner_alignment(tokens, ner_tags):
                  aligned_tags[token_idx] = ner_tags[ner_idx]
                  alignment_stats['aligned_count'] += 1
                  if len(mismatch_details) < 20:
+                     # define the “safe” versions of the two strings
                      token_text_safe = token_texts[token_idx] if token_idx < len(token_texts) else "TOKEN_OOB"
-                     ner_tag_safe = ner_tags[ner_idx]
-                     mismatch_details.append(f"Align: tok[{{token_idx}}]='{token_text_safe}' <-> tag[{{ner_idx}}]='{ner_tag_safe}'")
+                     ner_tag_safe    = ner_tags[ner_idx]
+                     # correctly interpolate token_idx / ner_idx
+                     mismatch_details.append(
+                         f"Align: tok[{token_idx}]='{token_text_safe}' "
+                         f"<-> tag[{ner_idx}]='{ner_tag_safe}'"
+                     )
             else:
                  logging.warning(f"Alignment index out of bounds: token_idx={{token_idx}} (max={{len(aligned_tags)-1}}), ner_idx={{ner_idx}} (max={{len(ner_tags)-1}})")
     logging.info(f"Alignment processed {{blocks_processed}} matching blocks. Total aligned: {{alignment_stats['aligned_count']}}")
