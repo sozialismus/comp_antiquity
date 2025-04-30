@@ -973,9 +973,27 @@ if __name__ == "__main__":
     ner_index = load_index(args.ner_index_csv, log_context=base_log_ctx)
     script_logger.info(f"Loaded {len(mappings)} unique mappings."); script_logger.info(f"Loaded {len(main_index)} unique main index entries."); script_logger.info(f"Loaded {len(ner_index)} unique NER index entries.")
 
-    if not mappings: script_logger.error("Mapping file loaded 0 entries. Cannot proceed. Exiting."); if logger: logger.summarize_and_close(); sys.exit(1)
-    if not main_index: script_logger.error("Main index file loaded 0 entries. Cannot proceed. Exiting."); if logger: logger.summarize_and_close(); sys.exit(1)
-    if not ner_index: script_logger.warning("NER index file loaded 0 entries. Processing will continue without NER data integration.")
+    if not mappings:
+        script_logger.error(
+            "Mapping file loaded 0 entries. Cannot proceed. Exiting."
+        )
+        if logger:
+            logger.summarize_and_close()
+            sys.exit(1)
+
+            if not main_index:
+                script_logger.error(
+                    "Main index file loaded 0 entries. Cannot proceed. Exiting."
+                )
+                if logger:
+                    logger.summarize_and_close()
+                    sys.exit(1)
+
+                    if not ner_index:
+                        script_logger.warning(
+                            "NER index file loaded 0 entries. "
+                            "Processing will continue without NER data integration."
+                        )
 
     tasks_to_process_info, skipped_missing_index, skipped_already_complete = determine_tasks_to_run(
         mappings=mappings, main_index=main_index, ner_index=ner_index,
