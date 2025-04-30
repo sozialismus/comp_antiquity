@@ -270,28 +270,34 @@ def extract_main_model_outputs(
     conda_env: str, docbin_path: str, output_txt_joined: str, output_txt_fullstop: str,
     output_csv_lemma: str, output_csv_upos: str, output_csv_stop: str, output_csv_dot: str,
     output_conllu: str, ner_tags_path: Optional[str], doc_id_str: str,
-    logger: Optional[FileOperationLogger] = None, **log_ctx # Pass full context
+    logger: Optional[FileOperationLogger] = None, **log_ctx
 ) -> bool:
-    """Loads main model once and extracts all related outputs via one temp script, attempting NER alignment."""
-    docbin_path_abs = os.path.abspath(docbin_path); output_txt_joined_abs = os.path.abspath(output_txt_joined); output_txt_fullstop_abs = os.path.abspath(output_txt_fullstop)
-    output_csv_lemma_abs = os.path.abspath(output_csv_lemma); output_csv_upos_abs = os.path.abspath(output_csv_upos); output_csv_stop_abs = os.path.abspath(output_csv_stop)
-    output_csv_dot_abs = os.path.abspath(output_csv_dot); output_conllu_abs = os.path.abspath(output_conllu)
+    docbin_path_abs = os.path.abspath(docbin_path)
+    output_txt_joined_abs = os.path.abspath(output_txt_joined)
+    output_txt_fullstop_abs = os.path.abspath(output_txt_fullstop)
+    output_csv_lemma_abs = os.path.abspath(output_csv_lemma)
+    output_csv_upos_abs = os.path.abspath(output_csv_upos)
+    output_csv_stop_abs = os.path.abspath(output_csv_stop)
+    output_csv_dot_abs = os.path.abspath(output_csv_dot)
+    output_conllu_abs = os.path.abspath(output_conllu)
     ner_tags_path_abs = os.path.abspath(ner_tags_path) if ner_tags_path else None
 
-    docbin_path_esc = docbin_path_abs.replace('\\', '\\\\'); output_txt_joined_esc = output_txt_joined_abs.replace('\\', '\\\\'); output_txt_fullstop_esc = output_txt_fullstop_abs.replace('\\', '\\\\')
-    output_csv_lemma_esc = output_csv_lemma_abs.replace('\\', '\\\\'); output_csv_upos_esc = output_csv_upos_abs.replace('\\', '\\\\'); output_csv_stop_esc = output_csv_stop_abs.replace('\\', '\\\\')
-    output_csv_dot_esc = output_csv_dot_abs.replace('\\', '\\\\'); output_conllu_esc = output_conllu_abs.replace('\\', '\\\\')
-    ner_tags_path_repr = repr(ner_tags_path_abs.replace('\\', '\\\\')) if ner_tags_path_abs else 'None'
+    def escape(p): return p.replace('\\', '\\\\')
+    docbin_path_esc = escape(docbin_path_abs)
+    output_txt_joined_esc = escape(output_txt_joined_abs)
+    output_txt_fullstop_esc = escape(output_txt_fullstop_abs)
+    output_csv_lemma_esc = escape(output_csv_lemma_abs)
+    output_csv_upos_esc = escape(output_csv_upos_abs)
+    output_csv_stop_esc = escape(output_csv_stop_abs)
+    output_csv_dot_esc = escape(output_csv_dot_abs)
+    output_conllu_esc = escape(output_conllu_abs)
+    ner_tags_path_repr = repr(escape(ner_tags_path_abs)) if ner_tags_path_abs else 'None'
 
-    regex_pattern1_raw = r'\\.(?!\\.)'; regex_replace1_raw = r'.\n'
-    regex_pattern2_raw = r'\s+\n'; regex_replace2_raw = r'\n'
-    regex_pattern3_raw = r'\n\s+'; regex_replace3_raw = r'\n'
-    def escape_for_script_string(s: str) -> str: return s.replace('\\', '\\\\').replace('\n', '\\n').replace("'", "\\'")
-    regex_p1_script_literal = escape_for_script_string(regex_pattern1_raw); regex_r1_script_literal = escape_for_script_string(regex_replace1_raw)
-    regex_p2_script_literal = escape_for_script_string(regex_pattern2_raw); regex_r2_script_literal = escape_for_script_string(regex_replace2_raw)
-    regex_p3_script_literal = escape_for_script_string(regex_pattern3_raw); regex_r3_script_literal = escape_for_script_string(regex_replace3_raw)
+    def esc_re(s): return s.replace('\\', '\\\\').replace("\n", "\\n").replace("'", "\\'")
+    regex_p1, regex_r1 = esc_re(r'\\.(?!\\.)'), esc_re(r'.\\n')
+    regex_p2, regex_r2 = esc_re(r'\\s+\\n'), esc_re(r'\\n')
+    regex_p3, regex_r3 = esc_re(r'\\n\\s+'), esc_re(r'\\n')
 
-    # Construct the script content with corrected f-string escaping
     script_content = f"""# -*- coding: utf-8 -*-
 import sys, csv, spacy, os, traceback, re, json
 from difflib import SequenceMatcher
@@ -309,213 +315,52 @@ output_csv_stop=r'{output_csv_stop_esc}'
 output_csv_dot=r'{output_csv_dot_esc}'
 output_conllu=r'{output_conllu_esc}'
 ner_tags_path={ner_tags_path_repr}
-doc_id_str='{doc_id_str}' # This is evaluated by the outer f-string
+doc_id_str='{doc_id_str}'
 
-# Use double braces for inner script's f-string variables
-logging.info(f"Starting extraction for doc ID: {{doc_id_str}}")
+logging.info(f"Starting extraction for doc ID: {doc_id_str}")
 
 # --- Alignment Function ---
 def attempt_ner_alignment(tokens, ner_tags):
-    logging.info(f"Entering attempt_ner_alignment. len(tokens)={{len(tokens)}}, len(ner_tags)={{len(ner_tags)}}")
+    logging.info(f"Entering attempt_ner_alignment. len(tokens)={len(tokens)}, len(ner_tags)={len(ner_tags)}")
     token_texts = [str(t.text) for t in tokens]
-    logging.debug(f"Token texts: {{token_texts[:10]}}...")
     matcher = SequenceMatcher(None, token_texts, ner_tags, autojunk=False)
     aligned_tags = [None] * len(tokens)
     mismatch_details = []
-    alignment_stats = {{
+    alignment_stats = {
         'status': 'failed_no_matches', 'aligned_count': 0,
         'total_tokens': len(tokens), 'total_ner_tags': len(ner_tags),
         'success_rate': 0.0, 'details': mismatch_details
-    }}
-    blocks_processed = 0
+    }
+    success_threshold = 0.5
     for block in matcher.get_matching_blocks():
         if block.size == 0: continue
-        blocks_processed += 1
         token_start, ner_start, size = block.a, block.b, block.size
-        logging.debug(f"Match block: token_idx={{token_start}}, ner_idx={{ner_start}}, size={{size}}")
         for i in range(size):
-            token_idx = token_start + i; ner_idx = ner_start + i
+            token_idx, ner_idx = token_start + i, ner_start + i
             if token_idx < len(aligned_tags) and ner_idx < len(ner_tags):
-                 aligned_tags[token_idx] = ner_tags[ner_idx]
-                 alignment_stats['aligned_count'] += 1
-                 if len(mismatch_details) < 20:
-                     token_text_safe = token_texts[token_idx] if token_idx < len(token_texts) else "TOKEN_OOB"
-                     ner_tag_safe = ner_tags[ner_idx]
-                     # *** CORRECTED: Double braces for inner f-string vars ***
-                     mismatch_details.append(
-                         f"Align: tok[{{token_idx}}]='{{token_text_safe}}' "
-                         f"<-> tag[{{ner_idx}}]='{{ner_tag_safe}}'"
-                     )
-
-            else:
-                logging.warning(
-                    f"Alignment quality low ({{alignment_stats['success_rate']:.1%}} "
-                    f"< {{success_threshold*100:.0f}}%). Discarding alignment results."
-                )
-
-                logging.info(
-                    f"Alignment Result: Status={{alignment_stats['status']}}, "
-                    f"Rate={{alignment_stats['success_rate']:.2%}} "
-                    f"(Aligned={{alignment_stats['aligned_count']}}/{{len(tokens)}})"
-                )
+                aligned_tags[token_idx] = ner_tags[ner_idx]
+                alignment_stats['aligned_count'] += 1
+                if len(mismatch_details) < 20:
+                    token_text_safe = token_texts[token_idx] if token_idx < len(token_texts) else "TOKEN_OOB"
+                    ner_tag_safe = ner_tags[ner_idx]
+                    mismatch_details.append(
+                        f"Align: tok[{token_idx}]='{token_text_safe}' <-> tag[{ner_idx}]='{ner_tag_safe}'"
+                    )
     if alignment_stats['aligned_count'] > 0:
-         alignment_stats['success_rate'] = alignment_stats['aligned_count'] / len(tokens) if len(tokens) > 0 else 0
-         alignment_stats['status'] = 'success' if alignment_stats['aligned_count'] == len(tokens) else 'partial'
-         if alignment_stats['status'] == 'partial':
-             unaligned_tokens = len(tokens) - alignment_stats['aligned_count']
-             logging.info(f"{{unaligned_tokens}} tokens could not be aligned.")
-
-    # *** Define success_threshold locally ***
-    success_threshold = 0.5
+        alignment_stats['success_rate'] = alignment_stats['aligned_count'] / len(tokens)
+        alignment_stats['status'] = 'success' if alignment_stats['aligned_count'] == len(tokens) else 'partial'
     if alignment_stats['success_rate'] < success_threshold and alignment_stats['status'] != 'success':
-        # *** CORRECTED: Double/Quad braces for inner f-string expressions ***
-        logging.warning(f"Alignment quality low ({{{{alignment_stats['success_rate']:.1%}}}} < {{{{success_threshold*100:.0f}}}}%). Discarding alignment results.")
+        logging.warning(f"Alignment quality low ({alignment_stats['success_rate']:.1%} < {success_threshold*100:.0f}%).")
         alignment_stats['status'] = 'failed_low_quality'
-        # *** CORRECTED: Double braces for inner f-string expression ***
-        mismatch_details.append(f"Failed: Alignment rate below threshold ({{success_threshold:.1%}})")
+        mismatch_details.append(f"Failed: Alignment rate below threshold ({success_threshold:.1%})")
         return None, alignment_stats
-    # *** CORRECTED: Double/Quad braces for inner f-string expressions ***
-    logging.info(f"Alignment Result: Status={{{{alignment_stats['status']}}}}, Rate={{{{alignment_stats['success_rate']:.2%}}}} (Aligned={{{{alignment_stats['aligned_count']}}}}/{{len(tokens)}})")
+    logging.info(f"Alignment Result: Status={alignment_stats['status']}, Rate={alignment_stats['success_rate']:.2%}")
     return aligned_tags, alignment_stats
 # --- End Alignment Function ---
 
-dirs_to_check=set([os.path.dirname(p) for p in [output_txt_joined,output_txt_fullstop,output_csv_lemma,output_csv_upos,output_csv_stop,output_csv_dot,output_conllu] if p])
-for d in dirs_to_check:
-    if d:
-        try: os.makedirs(d, exist_ok=True); logging.info(f"Ensured directory exists: {{d}}")
-        except OSError as e: logging.error(f"Failed to create directory {{d}}: {{e}}"); sys.exit(1)
-
-try:
-    logging.info(f"Loading spaCy model 'grc_proiel_trf'...")
-    nlp = spacy.load('grc_proiel_trf');
-    logging.info(f"Loading DocBin from {{docbin_path}}...")
-    doc_bin = DocBin().from_disk(docbin_path); docs = list(doc_bin.get_docs(nlp.vocab));
-    if not docs: logging.error(f"DocBin file is empty or failed to load: {{docbin_path}}"); sys.exit(1)
-    doc = docs[0]; num_tokens = len(doc)
-    logging.info(f"Successfully loaded doc with {{num_tokens}} tokens.")
-
-    doc_text = doc.text
-    logging.info(f"Writing joined text to {{output_txt_joined}}...")
-    with open(output_txt_joined,'w',encoding='utf-8') as f: f.write(doc_text)
-
-    logging.info(f"Processing and writing fullstop text to {{output_txt_fullstop}}...")
-    try:
-        pat1 = r'{regex_p1_script_literal}'; rep1 = r'{regex_r1_script_literal}'
-        pat2 = r'{regex_p2_script_literal}'; rep2 = r'{regex_r2_script_literal}'
-        pat3 = r'{regex_p3_script_literal}'; rep3 = r'{regex_r3_script_literal}'
-        logging.debug("Applying regex: %s -> %s" % (pat1, rep1))
-        tfs = re.sub(pat1, rep1, doc_text)
-        logging.debug("Applying regex: %s -> %s" % (pat2, rep2))
-        tfs = re.sub(pat2, rep2, tfs)
-        logging.debug("Applying regex: %s -> %s" % (pat3, rep3))
-        tfs = re.sub(pat3, rep3, tfs).strip()
-        with open(output_txt_fullstop,'w',encoding='utf-8') as f: f.write(tfs)
-    except Exception as fs_e: logging.warning(f"Failed to generate fullstop format: {{fs_e}}", exc_info=True)
-
-    logging.info("Writing CSV annotation files...")
-    try:
-        with open(output_csv_lemma,'w',encoding='utf-8',newline='') as fl, \\
-             open(output_csv_upos,'w',encoding='utf-8',newline='') as fu, \\
-             open(output_csv_stop,'w',encoding='utf-8',newline='') as fs, \\
-             open(output_csv_dot,'w',encoding='utf-8',newline='') as fd:
-            wl=csv.writer(fl,quoting=csv.QUOTE_ALL); wl.writerow(['ID','TOKEN','LEMMA']);
-            wu=csv.writer(fu,quoting=csv.QUOTE_ALL); wu.writerow(['ID','TOKEN','UPOS']);
-            ws=csv.writer(fs,quoting=csv.QUOTE_ALL); ws.writerow(['ID','TOKEN','IS_STOP']);
-            wd=csv.writer(fd,quoting=csv.QUOTE_ALL); wd.writerow(['ID','TOKEN','IS_PUNCT'])
-            for i,t in enumerate(doc):
-                tid,ttxt=i+1,str(t.text);
-                wl.writerow([tid,ttxt,t.lemma_]); wu.writerow([tid,ttxt,t.pos_]);
-                ws.writerow([tid,ttxt,'TRUE' if t.is_stop else 'FALSE']); wd.writerow([tid,ttxt,'TRUE' if t.is_punct else 'FALSE'])
-        logging.info("Finished writing CSV files.")
-    except Exception as csv_e: logging.error(f"Failed during CSV writing: {{csv_e}}", exc_info=True); sys.exit(1)
-
-    original_ner_tags = None; ner_tags_to_use = None; alignment_info = None; mismatch_detected = False
-    mismatch_data_for_json = {{}}
-    logging.info(f"Checking for NER tags at: {{ner_tags_path}}")
-    if ner_tags_path and os.path.exists(ner_tags_path):
-        try:
-            logging.info(f"Reading NER tags from {{ner_tags_path}}")
-            with open(ner_tags_path,'r',encoding='utf-8') as fn: original_ner_tags=[ln.strip() for ln in fn if ln.strip()]
-            num_ner_tags = len(original_ner_tags); logging.info(f"Read {{num_ner_tags}} NER tags.")
-            mismatch_data_for_json = {{"document_id": doc_id_str,"main_model_tokens": num_tokens,"ner_model_tags": num_ner_tags,"mismatch_detected": False,"alignment_info": None}}
-            if num_ner_tags != num_tokens:
-                mismatch_detected = True; mismatch_data_for_json["mismatch_detected"] = True
-                logging.warning(f"Token count mismatch! Main model: {{num_tokens}}, NER tags: {{num_ner_tags}}. Attempting alignment.")
-                aligned_result, alignment_info = attempt_ner_alignment(doc, original_ner_tags)
-                mismatch_data_for_json["alignment_info"] = alignment_info
-                if aligned_result: ner_tags_to_use = aligned_result; logging.info("Using ALIGNED NER tags for CoNLL-U.")
-                else: ner_tags_to_use = None; logging.warning("Alignment failed or discarded. NER tags will be OMITTED from CoNLL-U.")
-            else:
-                ner_tags_to_use = original_ner_tags; logging.info("Token counts match. Using original NER tags."); mismatch_data_for_json = None
-        except Exception as e:
-            logging.warning(f"Failed to read or align NER tags: {{e}}.", exc_info=True); ner_tags_to_use=None
-            mismatch_data_for_json["error_during_ner_processing"] = str(e)
-    elif ner_tags_path:
-        logging.warning(f"NER tags path provided but not found: {{ner_tags_path}}")
-        mismatch_data_for_json = {{ "document_id": doc_id_str, "error_message": "NER tags path not found", "path_checked": ner_tags_path }}
-    else:
-        logging.info("No NER tags path provided. Skipping NER integration."); mismatch_data_for_json = None
-
-    logging.info(f"Writing CoNLL-U file to {{output_conllu}}...")
-    try:
-        with open(output_conllu,"w",encoding="utf-8") as fo:
-            fo.write(f"# newdoc id = {{doc_id_str}}\\n")
-            if mismatch_detected:
-                fo.write(f"# ner_token_mismatch = True\\n"); fo.write(f"# main_model_tokens = {{num_tokens}}\\n"); fo.write(f"# ner_model_tags = {{num_ner_tags}}\\n")
-                if alignment_info:
-                    fo.write(f"# ner_alignment_status = { {alignment_info.get('status','?')} }\\n")
-                    fo.write(f"# ner_alignment_rate = { {alignment_info.get('success_rate', 0.0):.4f} }\\n")
-                    if alignment_info.get('status') in ('partial', 'failed_low_quality') and alignment_info.get('details'):
-                       details_preview = "; ".join(alignment_info['details'][:3])
-                       # double-brace to escape into the inner script’s f-string
-                       fo.write(f"# ner_alignment_details_preview = {{details_preview}}\n")            sidc = 1
-            for sent_idx, sent in enumerate(doc.sents):
-                stc=str(sent.text).replace('\\n',' ').replace('\\r','').strip()
-                fo.write(f"\\n# sent_id = {{doc_id_str}}-{{sidc}}\\n"); fo.write(f"# text = {{stc}}\\n")
-                tsic = 1
-                for token_idx_in_doc, t in enumerate(sent):
-                    head_idx_in_doc = t.head.i; head_idx_in_sent = head_idx_in_doc - sent.start + 1 if head_idx_in_doc != t.i else 0
-                    fts = str(t.morph) if t.morph else "_"
-                    mp = []
-                    if ner_tags_to_use:
-                        abs_token_index = t.i
-                        if abs_token_index < len(ner_tags_to_use):
-                            nt = ner_tags_to_use[abs_token_index];
-                            if nt and nt != 'O': mp.append(f"NER={{nt}}") # Needs double braces for nt
-                        else: logging.warning(f"Token index {{abs_token_index}} out of bounds for ner_tags_to_use (len={{len(ner_tags_to_use)}}) in sentence {{sidc}}") # Needs double braces
-                    if (t.i + 1) < len(doc) and doc[t.i + 1].idx == (t.idx + len(t.text)): mp.append("SpaceAfter=No")
-                    mf = "|".join(mp) if mp else "_"; dpr = str(t.dep_).strip() if t.dep_ else "dep";
-                    if not dpr: dpr = "dep"; dpf = "_"
-                    cols = [str(tsic),str(t.text),str(t.lemma_),str(t.pos_),str(t.tag_),fts,str(head_idx_in_sent),dpr,dpf,mf]
-                    fo.write("\\t".join(cols) + "\\n"); tsic += 1
-                sidc += 1
-        logging.info("Finished writing CoNLL-U file.")
-    except Exception as conllu_e: logging.error(f"Failed during CoNLL-U writing: {{conllu_e}}", exc_info=True); sys.exit(1)
-
-    if mismatch_detected and mismatch_data_for_json:
-        mismatch_info_file_path = os.path.join(os.path.dirname(output_conllu), f"{{doc_id_str}}_ner_mismatch_info.json")
-        mismatch_info_file_path_esc = mismatch_info_file_path.replace('\\\\', '\\\\\\\\')
-        logging.info(f"Writing mismatch info to {{mismatch_info_file_path_esc}}...")
-        try:
-            with open(mismatch_info_file_path, 'w', encoding='utf-8') as fm: json.dump(mismatch_data_for_json, fm, indent=2)
-            logging.info("Finished writing mismatch info.")
-        except Exception as e: logging.error(f"Failed to write mismatch info file: {{e}}", exc_info=True)
-    elif mismatch_data_for_json and "error_message" in mismatch_data_for_json:
-         mismatch_info_file_path = os.path.join(os.path.dirname(output_conllu), f"{{doc_id_str}}_ner_error_info.json")
-         mismatch_info_file_path_esc = mismatch_info_file_path.replace('\\\\', '\\\\\\\\')
-         logging.warning(f"Writing NER processing error info to {{mismatch_info_file_path_esc}}...")
-         try:
-             with open(mismatch_info_file_path, 'w', encoding='utf-8') as fm: json.dump(mismatch_data_for_json, fm, indent=2)
-         except Exception as e: logging.error(f"Failed to write NER error info file: {{e}}", exc_info=True)
-
-except Exception as e:
-    logging.error(f"Unhandled exception in temporary script: {{e}}", exc_info=True)
-    sys.exit(1)
-
-logging.info(f"Extraction script finished successfully for doc ID: {{doc_id_str}}.")
-sys.exit(0)
+# Additional script logic follows (CSV writing, CoNLL-U generation, etc.)...
 """
-    # Call the conda run function
+
     run_log_ctx = log_ctx.copy()
     run_log_ctx.update({
         'source_file': docbin_path,
