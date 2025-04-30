@@ -342,9 +342,11 @@ def attempt_ner_alignment(tokens, ner_tags):
                  aligned_tags[token_idx] = ner_tags[ner_idx]
                  alignment_stats['aligned_count'] += 1
                  # *** FIX: Move append inside the if block ***
-                 if len(mismatch_details) < 20:
+                 if len(mismatch_details) < 20: # Limit details logged
+                     # Define variables *inside* the if block
                      token_text_safe = token_texts[token_idx] if token_idx < len(token_texts) else "TOKEN_OOB"
                      ner_tag_safe = ner_tags[ner_idx]
+                     # Append *inside* the if block
                      mismatch_details.append(f"Align: tok[{{token_idx}}]='{token_text_safe}' <-> tag[{{ner_idx}}]='{ner_tag_safe}'")
                  # *** END FIX ***
             else:
