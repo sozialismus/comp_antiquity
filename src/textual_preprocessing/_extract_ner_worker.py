@@ -6,32 +6,29 @@ import logging
 import os
 import sys
 import traceback
+# --- Removed unused imports ---
+# import re
+# import shutil
+# import subprocess
+# import time
+# import tempfile
+# import signal
+# import glob
+# from collections import Counter # Not used here
+# from difflib import SequenceMatcher # Not used here
+# from datetime import datetime # Not used here
+# from pathlib import Path # Not used here
+# from typing import Dict, List, Optional, Tuple, Any # Optional not used directly here
+# import pandas as pd # Not used here
+# import tqdm # Not used here
+# import wandb # Not used here
+# --- End Removal ---
 
-import argparse
-import csv
-import os
-import re
-import shutil
-import subprocess
-import time
-import tempfile
-import traceback
-import logging
-import signal
-import sys
-import json
-import glob
-from collections import Counter
-from difflib import SequenceMatcher
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
-
-import pandas as pd
-import tqdm
-import wandb
+# --- Keep necessary imports ---
 import spacy
 from spacy.tokens import DocBin
+# --- End Keep ---
+
 
 # Configure basic logging within the script
 logging.basicConfig(
@@ -50,6 +47,7 @@ def extract_ner_data(
     new_id_str: str,
 ):
     """Loads NER model, processes docbin, writes NER CSV, tags list, and stats."""
+    # Use f-strings now as this is a standalone script
     logging.info(f"Starting NER extraction for Doc ID: {old_id_str} -> {new_id_str}")
     logging.info(f"NER DocBin Path: {docbin_path}")
     logging.info(f"NER Model: {ner_model_name}")
@@ -83,9 +81,9 @@ def extract_ner_data(
         tags_list = []
         logging.info(f"Writing NER CSV to {output_csv_ner} and tags to {output_ner_tags}...")
         try:
+            # Use with statement correctly (no need for backslash line continuation if indented)
             with open(output_csv_ner,'w',encoding='utf-8',newline='') as fner, \
                  open(output_ner_tags,'w',encoding='utf-8') as ftags:
-                # Use QUOTE_ALL for safety
                 wn = csv.writer(fner, quoting=csv.QUOTE_ALL)
                 wn.writerow(['ID','TOKEN','NER'])
 
@@ -94,15 +92,12 @@ def extract_ner_data(
                     ttxt = str(t.text)
                     nt = t.ent_type_ if t.ent_type_ else 'O'
 
-                    if nt != 'O':
-                        ner_stats['ner_tokens'] += 1
-                    else:
-                        ner_stats['o_tokens'] += 1
+                    if nt != 'O': ner_stats['ner_tokens'] += 1
+                    else: ner_stats['o_tokens'] += 1
 
                     wn.writerow([tid, ttxt, nt])
-                    tags_list.append(nt) # Append the tag (e.g., 'O', 'PERSON') to the list
+                    tags_list.append(nt)
 
-                # Write all tags to the tags file, one per line
                 ftags.write('\n'.join(tags_list))
             logging.info(f"Finished writing NER CSV and tags file. NER tokens: {ner_stats['ner_tokens']}, O tokens: {ner_stats['o_tokens']}.")
 
@@ -128,7 +123,6 @@ def extract_ner_data(
             logging.info("Finished writing NER stats summary.")
 
         except Exception as e:
-            # Log failure but don't necessarily exit - summary is non-critical
             logging.warning(f"Failed write NER summary file: {e}", exc_info=True)
 
     except Exception as e:
