@@ -34,10 +34,6 @@ from typing import Dict, List, Optional, Tuple, Any
 from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 
 
-import pandas as pd
-import tqdm
-import wandb
-
 # --- Configure standard logging ---
 logging.basicConfig(
     level=logging.INFO,
@@ -99,6 +95,11 @@ except ImportError:
     })()
     FileLockTimeout = DummyFileLockTimeout # Assign the dummy timeout for consistent access pattern
     # --- END FIX 1 Part 2 ---
+
+import pandas as pd
+import tqdm
+import wandb
+
 
 # --- (#9) Performance Profiling Decorator ---
 def timed_operation(operation_name):
@@ -290,8 +291,6 @@ class FileOperationLogger:
 
         if self.use_wandb and wandb.run:
             try:
-                # Update summary directly (wandb handles aggregation)
-                # wandb.summary.update(summary) # Update with dict might overwrite incremental logs
                 # Update specific summary fields instead
                 wandb.summary['total_logged_operations'] = total_operations
                 wandb.summary['successful_operations_final'] = successful_ops_final
@@ -302,7 +301,7 @@ class FileOperationLogger:
                 wandb.summary['success_rate_final'] = success_rate
                 wandb.summary["completion_time"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-                # --- FIX 2: Log numerical success rate to table ---
+                # Log a summary table
                 columns = ["Metric", "Value"];
                 data = [
                     ["Total Logged Ops", total_operations],
@@ -310,12 +309,10 @@ class FileOperationLogger:
                     ["Failed Ops (Final)", failed_ops_final],
                     ["Warning Ops (Final)", warning_ops_final],
                     ["Other Status Ops", summary['other_status_operations']],
-                    # Use the numerical success rate here
                     ["Success Rate (Success/Fail)", round(success_rate, 4)],
                     ["Unique Docs Processed", len(unique_old_ids)],
                     ["Unique New IDs Created", len(unique_new_ids)]
                 ]
-                # --- END FIX 2 ---
                 for op_type, count in sorted(operation_counts.items()): data.append([f"Op Count: {op_type}", count])
                 for file_type, count in sorted(file_type_counts.items()): data.append([f"File Type Count: {file_type}", count])
 
@@ -340,11 +337,9 @@ class FileOperationLogger:
 
                 wandb.finish()
             except Exception as e:
-                 # Provide more context on WandB errors
                  self.logger.warning(f"Failed during final WandB summary/logging/finish: {type(e).__name__}: {e}", exc_info=True)
-                 # Try to finish wandb run even if logging failed
                  try:
-                     if wandb.run: wandb.finish(exit_code=1) # Indicate error exit code
+                     if wandb.run: wandb.finish(exit_code=1)
                  except Exception as finish_e:
                       self.logger.error(f"Failed to even finish wandb run: {finish_e}")
         else:
@@ -354,13 +349,14 @@ class FileOperationLogger:
         return summary
 
 
+# --- Extraction Functions ---
 # Integrates your enhanced main model extraction logic
 @timed_operation("extract_main_outputs")
 def extract_main_model_outputs(
     conda_env: str, docbin_path: str, output_txt_joined: str, output_txt_fullstop: str,
     output_csv_lemma: str, output_csv_upos: str, output_csv_stop: str, output_csv_dot: str,
     output_conllu: str, ner_tags_path: Optional[str], doc_id_str: str,
-    logger: Optional[FileOperationLogger] = None, **log_ctx # Pass full context
+    logger: Optional['FileOperationLogger'] = None, **log_ctx # Pass full context
 ) -> bool:
     """Loads main model once and extracts all related outputs via one temp script, attempting NER alignment."""
     # Ensure all paths are absolute for the script context
@@ -859,7 +855,7 @@ def summarize_token_mismatches(output_base_dir: str, logger: Optional[FileOperat
     return summary
 
 
-# --- Helper Functions --- (Keep validate_input_file, validate_output_dir, load_index, parse_csv_mapping, find_original_text as they were)
+# --- Helper Functions ---
 def validate_input_file(file_path: str, file_type: str) -> bool:
     """Checks if an input file exists and is readable."""
     if not file_path: script_logger.error(f"Input {file_type} path is empty."); return False # Check for empty path
@@ -1014,27 +1010,27 @@ def find_original_text(doc_id: str, base_dir: str) -> Optional[str]:
     """Attempts to find the original .txt file based on doc_id and base_dir structure."""
     # Use Path for robustness
     base_path = Path(base_dir).resolve() # Resolve to absolute path
-    source_sub_dir_name = "cleaned_parsed_data"
-    source_sub_dir = base_path / source_sub_dir_name
+    source_sub_dir_name = "cleaned_parsed_data" # THIS SHOULD MATCH THE --base-dir ARGUMENT'S INTENTION
+    # The --base-dir argument was 'dat/greek/cleaned_parsed_data/'
+    # So, we should look *directly* in base_path and potential corpus subdirs within it
+    # source_sub_dir = base_path / source_sub_dir_name # REMOVE THIS LINE
 
     corpus_prefix_match = re.match(r'^([a-zA-Z0-9\-_]+?)_', doc_id)
     corpus_prefix = corpus_prefix_match.group(1) if corpus_prefix_match else None
 
     possible_paths = []
 
-    # Strategy 1: Look in corpus-specific subdirectory
+    # Strategy 1: Look in corpus-specific subdirectory *within* base_dir
     if corpus_prefix:
-        corpus_dir = source_sub_dir / corpus_prefix
+        corpus_dir = base_path / corpus_prefix # Look in e.g., .../cleaned_parsed_data/perseus/
         filename_part = doc_id.replace(f"{corpus_prefix}_", "", 1)
         # Path using just the filename part after prefix
         possible_paths.append(corpus_dir / f"{filename_part}.txt")
         # Path using the full original doc_id within the corpus dir
         possible_paths.append(corpus_dir / f"{doc_id}.txt")
 
-    # Strategy 2: Look directly in the source_sub_dir (e.g., if no prefix or flat structure)
-    possible_paths.append(source_sub_dir / f"{doc_id}.txt")
-
-    # Strategy 3: Look directly in the base_dir (less likely but possible)
+    # Strategy 2: Look directly in the base_dir itself (e.g., if no prefix or flat structure)
+    # Path using the full original doc_id within the base dir
     possible_paths.append(base_path / f"{doc_id}.txt")
 
 
@@ -1075,8 +1071,8 @@ def get_expected_output_paths(output_base_dir: str, corpus_prefix: str, new_id: 
         "ner_error_info": os.path.join(annotations_dir, f"{new_id}_ner_error_info.json"),
     }
 
-
-# --- Main Processing Logic ---
+# --- START REPLACEMENT: process_document ---
+# --- Modified Main Processing Logic ---
 @timed_operation("process_document")
 def process_document(
     old_id: str, new_id: str, base_dir: str, output_base_dir: str,
@@ -1090,26 +1086,36 @@ def process_document(
     corpus_prefix_match = re.match(r'^([a-zA-Z0-9\-_]+?)_', old_id)
     corpus_prefix = corpus_prefix_match.group(1) if corpus_prefix_match else "unknown_corpus"
 
-    if not log_context: log_context = {'old_id': old_id, 'new_id': new_id, 'corpus_prefix': corpus_prefix}
-    else: log_context.update({'old_id': old_id, 'new_id': new_id, 'corpus_prefix': corpus_prefix})
+    # --- Safer log_context handling ---
+    # Start with essential IDs and prefix
+    current_log_context = {'old_id': old_id, 'new_id': new_id, 'corpus_prefix': corpus_prefix}
+    # If a context was passed in, update ONLY with keys NOT already set or critical
+    if log_context:
+        for key, value in log_context.items():
+            if key not in current_log_context: # Avoid overwriting core IDs/prefix
+                current_log_context[key] = value
+    # --- End safer log_context handling ---
 
-    if logger: logger.log_operation(**log_context, operation_type="process_start", file_type="document", status="info", details=f"Processing (O={overwrite}, L={use_locking})")
 
+    if logger: logger.log_operation(**current_log_context, operation_type="process_start", file_type="document", status="info", details=f"Processing (O={overwrite}, L={use_locking})")
+
+    # --- Path Retrieval ---
     main_docbin_path = main_index.get(old_id)
     if not main_docbin_path or not os.path.isfile(main_docbin_path):
-         if logger: logger.log_operation(**log_context, operation_type="lookup", file_type="main_docbin", status="failed", details="Main docbin path invalid/not found during processing step!")
+         if logger: logger.log_operation(**current_log_context, operation_type="lookup", file_type="main_docbin", status="failed", details="Main docbin path invalid/not found during processing step!")
          return False, "Failed: Main DocBin vanished post-check"
 
     ner_docbin_path = ner_index.get(old_id)
     ner_docbin_path_resolved = None
     if ner_docbin_path and os.path.isfile(ner_docbin_path): ner_docbin_path_resolved = ner_docbin_path
     elif ner_docbin_path:
-        if logger: logger.log_operation(**log_context, operation_type="lookup", file_type="ner_docbin", status="warning", details="NER index path invalid/not found during processing step.")
+        if logger: logger.log_operation(**current_log_context, operation_type="lookup", file_type="ner_docbin", status="warning", details="NER index path invalid/not found during processing step.")
     else: script_logger.debug(f"[{old_id}->{new_id}] No NER docbin path found in index.")
 
     source_txt_path = find_original_text(old_id, base_dir)
     paths = get_expected_output_paths(output_base_dir, corpus_prefix, new_id)
     texts_dir = paths["texts_dir"]; annotations_dir = paths["annotations_dir"]
+    # Get specific paths needed later
     output_txt_joined=paths["output_txt_joined"]; output_txt_fullstop=paths["output_txt_fullstop"]
     output_csv_lemma=paths["output_csv_lemma"]; output_csv_upos=paths["output_csv_upos"]
     output_csv_stop=paths["output_csv_stop"]; output_csv_dot=paths["output_csv_dot"]
@@ -1117,93 +1123,162 @@ def process_document(
     temp_ner_tags_file=Path(paths["temp_ner_tags_file"]); temp_files_to_clean.append(str(temp_ner_tags_file))
     ner_tags_lock_path=str(temp_ner_tags_file)+".lock"
     dest_original_txt = paths["source_original_txt"]
+    # --- Get lock directory ---
+    lock_dir = os.path.dirname(ner_tags_lock_path)
 
+    # --- Directory Creation ---
     try:
-        os.makedirs(texts_dir, exist_ok=True); os.makedirs(annotations_dir, exist_ok=True)
+        # Create annotations dir first, as lock file goes there
+        os.makedirs(annotations_dir, exist_ok=True)
+        script_logger.debug(f"[{old_id}->{new_id}] Ensured annotations directory exists: {annotations_dir}")
+        # Then create texts dir
+        os.makedirs(texts_dir, exist_ok=True)
+        script_logger.debug(f"[{old_id}->{new_id}] Ensured texts directory exists: {texts_dir}")
     except OSError as e:
-         if logger: logger.log_operation(**log_context, operation_type="create_dir", file_type="directory", status="failed", details=f"Dir creation error for {texts_dir} or {annotations_dir}: {e}")
+         # Use current_log_context for logging
+         if logger: logger.log_operation(**current_log_context, operation_type="create_dir", file_type="directory", status="failed", details=f"Dir creation error for {texts_dir} or {annotations_dir}: {e}")
          return False, f"Failed: Dir creation error {e}"
 
     try:
-        # Determine which lock type to use based on availability AND the flag
-        LockClass = filelock.FileLock if use_locking and FILELOCK_AVAILABLE else DummyFileLock
+        # Determine lock class *once* per document process
+        use_real_lock = use_locking and FILELOCK_AVAILABLE
+        LockClass = filelock.FileLock if use_real_lock else DummyFileLock
         LockTimeoutError = FileLockTimeout # Use the globally assigned Timeout (real or dummy)
+        # --- ADD DEBUG LOG ---
+        script_logger.debug(f"[{old_id}->{new_id}] Using LockClass: {LockClass.__name__} (use_locking={use_locking}, FILELOCK_AVAILABLE={FILELOCK_AVAILABLE})")
+        # --- END DEBUG LOG ---
+
+        ner_lock_instance = None # Define variable to hold lock instance if needed
 
         # --- NER Extraction ---
         ner_tags_available = False
         if ner_docbin_path_resolved:
-            script_logger.info(f"[{old_id}->{new_id}] Extracting NER outputs...")
-            ner_lock = LockClass(ner_tags_lock_path, timeout=10) # Use selected LockClass
+            script_logger.info(f"[{old_id}->{new_id}] Attempting NER extraction & lock...")
+
+            # --- ADD PRE-LOCK CHECKS ---
             try:
-                with ner_lock.acquire():
-                    if extract_ner_model_outputs(ner_env, ner_docbin_path_resolved, output_csv_ner, str(temp_ner_tags_file), logger, **log_context):
-                        ner_tags_available = True
-                    else:
-                        overall_success = False; final_status_msg = "Failed: NER extraction"
-            except (LockTimeoutError, Exception) as lock_e: # Catch specific timeout or general lock error
-                lock_fail_details = f"Timeout acquiring lock {os.path.basename(ner_tags_lock_path)}" if isinstance(lock_e, LockTimeoutError) else f"Error acquiring lock {os.path.basename(ner_tags_lock_path)}: {lock_e}"
-                if logger: logger.log_operation(**log_context, operation_type="lock", file_type="ner-tags-write", status="failed", details=lock_fail_details)
-                overall_success = False; final_status_msg = f"Failed: NER lock {'timeout' if isinstance(lock_e, LockTimeoutError) else 'error'}"
+                script_logger.debug(f"[{old_id}->{new_id}] Checking lock directory: {lock_dir}")
+                if not os.path.exists(lock_dir):
+                    script_logger.error(f"[{old_id}->{new_id}] Lock directory does not exist: {lock_dir}")
+                    raise OSError(f"Lock directory missing: {lock_dir}") # Raise specific error
+                if not os.access(lock_dir, os.W_OK):
+                    script_logger.error(f"[{old_id}->{new_id}] No write access to lock directory: {lock_dir}")
+                    raise PermissionError(f"No write access to lock directory: {lock_dir}") # Raise specific error
+                script_logger.debug(f"[{old_id}->{new_id}] Lock directory check OK.")
+
+                script_logger.debug(f"[{old_id}->{new_id}] Instantiating lock: {LockClass.__name__} for {ner_tags_lock_path}")
+                ner_lock_instance = LockClass(ner_tags_lock_path, timeout=10) # Assign instance here
+            except Exception as pre_lock_e:
+                # Catch errors during pre-checks or lock instantiation
+                script_logger.error(f"!!! Pre-Lock/Instantiation Exception ({type(pre_lock_e).__name__}) for doc {old_id}->{new_id}: {pre_lock_e}", exc_info=True)
+                if logger: logger.log_operation(
+                    old_id=old_id, new_id=new_id, corpus_prefix=corpus_prefix,
+                    operation_type="lock_setup", file_type="ner-tags-write", status="failed",
+                    details=f"Error setting up lock for {os.path.basename(ner_tags_lock_path)}: {pre_lock_e} (Type: {type(pre_lock_e).__name__})"
+                )
+                overall_success = False; final_status_msg = "Failed: Lock setup error"
+                # Skip to finally block if setup fails
+                ner_docbin_path_resolved = None # Use this flag to skip the acquire block
+            # --- END PRE-LOCK CHECKS ---
+
+            # Only attempt acquire if pre-checks passed and lock was instantiated
+            if overall_success and ner_docbin_path_resolved and ner_lock_instance: # Check flag and instance
+                try:
+                    script_logger.debug(f"[{old_id}->{new_id}] Acquiring NER write lock: {ner_tags_lock_path}")
+                    with ner_lock_instance.acquire(): # Use the instantiated lock
+                        script_logger.debug(f"[{old_id}->{new_id}] NER write lock acquired. Running extraction...")
+                        # Pass current_log_context here
+                        if extract_ner_model_outputs(ner_env, ner_docbin_path_resolved, output_csv_ner, str(temp_ner_tags_file), logger, **current_log_context):
+                            ner_tags_available = True
+                        else:
+                            overall_success = False; final_status_msg = "Failed: NER extraction"
+                    script_logger.debug(f"[{old_id}->{new_id}] NER write lock released.")
+                except (LockTimeoutError, Exception) as lock_e:
+                    script_logger.error(f"!!! Lock Exception caught during NER Write Acquire ({type(lock_e).__name__}) for doc {old_id}->{new_id}: {lock_e}", exc_info=True) # Log traceback
+                    lock_fail_details = f"Timeout acquiring lock {os.path.basename(ner_tags_lock_path)}" if isinstance(lock_e, LockTimeoutError) else f"Error acquiring lock {os.path.basename(ner_tags_lock_path)}: {lock_e}"
+                    # Use explicit logging call (FIX from previous step)
+                    if logger: logger.log_operation(
+                        old_id=old_id, new_id=new_id, corpus_prefix=corpus_prefix,
+                        operation_type="lock", file_type="ner-tags-write", status="failed",
+                        details=f"{lock_fail_details} (Exception Type: {type(lock_e).__name__})"
+                    )
+                    overall_success = False; final_status_msg = f"Failed: NER lock {'timeout' if isinstance(lock_e, LockTimeoutError) else 'error'}"
         else:
-             if logger: logger.log_operation(**log_context, operation_type="extract", file_type="ner-model-outputs", status="skipped", details="NER docbin not resolved or found during processing step.")
+             if logger: logger.log_operation(**current_log_context, operation_type="extract", file_type="ner-model-outputs", status="skipped", details="NER docbin not resolved or found during processing step.")
 
         # --- Main Model Extraction ---
         if overall_success:
             ner_tags_input_path = None
-            ner_read_lock = LockClass(ner_tags_lock_path, timeout=10) # Use selected LockClass again
+            script_logger.debug(f"[{old_id}->{new_id}] Attempting main extraction & read lock...")
+            ner_read_lock = LockClass(ner_tags_lock_path, timeout=10) # Use determined LockClass again
             try:
+                script_logger.debug(f"[{old_id}->{new_id}] Acquiring NER read lock: {ner_tags_lock_path}")
                 with ner_read_lock.acquire():
+                    script_logger.debug(f"[{old_id}->{new_id}] NER read lock acquired.")
                     if temp_ner_tags_file.is_file(): ner_tags_input_path = str(temp_ner_tags_file)
                     elif ner_tags_available:
-                         if logger: logger.log_operation(**log_context, operation_type="read", file_type="temp_ner_tags", status="warning", details="NER extraction reported success but temp tags file not found before main extraction.")
+                         if logger: logger.log_operation(**current_log_context, operation_type="read", file_type="temp_ner_tags", status="warning", details="NER extraction reported success but temp tags file not found before main extraction.")
+                script_logger.debug(f"[{old_id}->{new_id}] NER read lock released (implicitly by exiting 'with').")
 
+                # Extraction happens *after* releasing the read lock
                 script_logger.info(f"[{old_id}->{new_id}] Extracting Main Model outputs (using NER tags: {ner_tags_input_path is not None})...")
+                # Pass current_log_context here
                 if not extract_main_model_outputs(
                     main_env, main_docbin_path,
                     output_txt_joined, output_txt_fullstop,
                     output_csv_lemma, output_csv_upos, output_csv_stop, output_csv_dot,
-                    output_conllu, ner_tags_input_path, new_id, logger, **log_context
+                    output_conllu, ner_tags_input_path, new_id, logger, **current_log_context
                 ):
                     overall_success = False; final_status_msg = "Failed: Main model extraction"
 
             except (LockTimeoutError, Exception) as lock_e:
+                script_logger.error(f"!!! Lock Exception caught during NER Read Acquire ({type(lock_e).__name__}) for doc {old_id}->{new_id}: {lock_e}", exc_info=True) # Log traceback
                 lock_fail_details = f"Timeout acquiring lock {os.path.basename(ner_tags_lock_path)} for read" if isinstance(lock_e, LockTimeoutError) else f"Error acquiring lock {os.path.basename(ner_tags_lock_path)} for read: {lock_e}"
-                if logger: logger.log_operation(**log_context, operation_type="lock", file_type="conllu-ner-read", status="failed", details=lock_fail_details)
+                # Use explicit logging call (FIX from previous step)
+                if logger: logger.log_operation(
+                    old_id=old_id, new_id=new_id, corpus_prefix=corpus_prefix,
+                    operation_type="lock", file_type="conllu-ner-read", status="failed",
+                    details=f"{lock_fail_details} (Exception Type: {type(lock_e).__name__})"
+                )
                 overall_success = False; final_status_msg = f"Failed: CoNLLU lock {'timeout' if isinstance(lock_e, LockTimeoutError) else 'error'}"
 
         # --- Copy Original Text ---
+        # Use current_log_context for these logs too
         if source_txt_path:
             if overwrite or not os.path.exists(dest_original_txt):
                 try:
                     shutil.copy2(source_txt_path, dest_original_txt)
-                    if logger: logger.log_operation(**log_context, operation_type="copy", file_type="source_txt", source_file=source_txt_path, destination_file=dest_original_txt, status="success")
+                    if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", source_file=source_txt_path, destination_file=dest_original_txt, status="success")
                 except Exception as e:
-                    if logger: logger.log_operation(**log_context, operation_type="copy", file_type="source_txt", source_file=source_txt_path, destination_file=dest_original_txt, status="failed", details=str(e))
+                    if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", source_file=source_txt_path, destination_file=dest_original_txt, status="failed", details=str(e))
             else:
-                 if logger: logger.log_operation(**log_context, operation_type="copy", file_type="source_txt", status="skipped", details="Destination original text exists (overwrite=False)")
+                 if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", status="skipped", details="Destination original text exists (overwrite=False)")
         else:
-            if logger: logger.log_operation(**log_context, operation_type="copy", file_type="source_txt", status="skipped", details="Source original text file not found.")
+            if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", status="skipped", details="Source original text file not found.")
 
     finally:
+        # Use current_log_context for cleanup logs
         script_logger.debug(f"[{old_id}->{new_id}] Cleaning up temporary files...")
         for temp_file_path_str in temp_files_to_clean:
             temp_file_p = Path(temp_file_path_str)
             if temp_file_p.exists():
                 try: temp_file_p.unlink(); script_logger.debug(f"[{old_id}->{new_id}] Removed temp file: {temp_file_p.name}")
                 except OSError as e:
-                    if logger: logger.log_operation(**log_context, operation_type="cleanup", file_type="temp_file", status="failed", details=f"Error removing {temp_file_p.name}: {e}")
+                    if logger: logger.log_operation(**current_log_context, operation_type="cleanup", file_type="temp_file", status="failed", details=f"Error removing {temp_file_p.name}: {e}")
         lock_file_p = Path(ner_tags_lock_path)
         # Check if the *real* lock file exists before trying to remove it
         if use_locking and FILELOCK_AVAILABLE and lock_file_p.exists():
             try: lock_file_p.unlink(); script_logger.debug(f"[{old_id}->{new_id}] Removed lock file: {lock_file_p.name}")
             except OSError as e:
-                 if logger: logger.log_operation(**log_context, operation_type="cleanup", file_type="lock_file", status="failed", details=f"Failed remove lock {lock_file_p.name}: {e}")
+                 if logger: logger.log_operation(**current_log_context, operation_type="cleanup", file_type="lock_file", status="failed", details=f"Failed remove lock {lock_file_p.name}: {e}")
 
-    if logger: logger.log_operation(**log_context, operation_type="process_end", file_type="document", status="success" if overall_success else "failed", details=f"Finished. Final Status: {final_status_msg}")
+    # Use current_log_context for the final log
+    if logger: logger.log_operation(**current_log_context, operation_type="process_end", file_type="document", status="success" if overall_success else "failed", details=f"Finished. Final Status: {final_status_msg}")
     return overall_success, final_status_msg
+# --- END REPLACEMENT: process_document ---
 
 
-# --- (#8) Graceful Shutdown Handler --- (Keep as is)
+# --- (#8) Graceful Shutdown Handler ---
 _shutdown_requested = False; _executor_ref = None
 def setup_graceful_shutdown():
     global _executor_ref
@@ -1226,7 +1301,7 @@ def setup_graceful_shutdown():
     signal.signal(signal.SIGINT, handler); signal.signal(signal.SIGTERM, handler)
 
 
-# --- Pre-check Function --- (Keep as is)
+# --- Pre-check Function ---
 @timed_operation("determine_tasks")
 def determine_tasks_to_run(
     mappings: Dict[str, str],
@@ -1290,12 +1365,12 @@ def determine_tasks_to_run(
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    # --- Argument Parsing --- (Keep as is)
+    # --- Argument Parsing ---
     parser = argparse.ArgumentParser(description="Reorganize corpus documents...", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--mapping-csv", required=True, help="Path to CSV mapping 'document_id' to 'sort_id'.")
     parser.add_argument("--main-index-csv", required=True, help="Path to CSV index for main model DocBins ('document_id', 'processed_path').")
     parser.add_argument("--ner-index-csv", required=True, help="Path to CSV index for NER model DocBins ('document_id', 'processed_path').")
-    parser.add_argument("--base-dir", required=True, help="Path to base directory containing original source data (e.g., 'cleaned_parsed_data').")
+    parser.add_argument("--base-dir", required=True, help="Path to base directory containing original source data (e.g., 'dat/greek/cleaned_parsed_data/').")
     parser.add_argument("--output-dir", required=True, help="Path to base directory for reorganized output.")
     parser.add_argument("--main-env", required=True, help="Name of Conda environment for the main spaCy model (e.g., 'grc_proiel_trf').")
     parser.add_argument("--ner-env", required=True, help="Name of Conda environment for the NER spaCy model (e.g., 'grc_ner_trf').")
@@ -1307,7 +1382,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-wandb", action="store_true", help="Disable Weights & Biases logging.")
     args = parser.parse_args()
 
-    # --- Input Validation --- (Keep as is)
+    # --- Input Validation ---
     script_logger.info("Validating inputs...")
     valid_inputs = True
     if not validate_input_file(args.mapping_csv, "Mapping CSV"): valid_inputs = False
@@ -1320,27 +1395,43 @@ if __name__ == "__main__":
     if not valid_inputs: script_logger.error("Input validation failed. Exiting."); sys.exit(1)
     script_logger.info("Input validation successful.")
 
-    # --- Initialize Logger and Timers --- (Keep as is)
+    # --- Initialize Logger and Timers ---
     start_time = time.time()
     logger = FileOperationLogger(log_file_path=args.log_file, use_wandb=(not args.no_wandb), wandb_project=args.wandb_project)
 
-    # --- Log Script Arguments --- (Keep as is)
+    # --- Log Script Arguments ---
     script_logger.info("=" * 60); script_logger.info(" Corpus Reorganization Script Started"); script_logger.info("=" * 60)
-    script_logger.info(f" Run Name: {logger.run_name}") # ... (rest of argument logging) ...
+    script_logger.info(f" Run Name: {logger.run_name}")
+    script_logger.info(f" Overwrite Mode: {args.overwrite}")
+    script_logger.info(f" Parallel Workers: {args.num_workers}")
+    script_logger.info(f" File Locking: {'Enabled' if args.use_locking else 'Disabled'}")
+    script_logger.info(f" Mapping CSV: {os.path.abspath(args.mapping_csv)}")
+    script_logger.info(f" Main Index CSV: {os.path.abspath(args.main_index_csv)}")
+    script_logger.info(f" NER Index CSV: {os.path.abspath(args.ner_index_csv)}")
+    script_logger.info(f" Base Source Dir: {os.path.abspath(args.base_dir)}")
+    script_logger.info(f" Output Base Dir: {os.path.abspath(args.output_dir)}")
+    script_logger.info(f" Main Conda Env: {args.main_env}")
+    script_logger.info(f" NER Conda Env: {args.ner_env}")
+    script_logger.info(f" Log File: {os.path.abspath(args.log_file) if logger.log_file_path else 'Disabled'}")
     script_logger.info(f" WandB Logging: {'Enabled' if logger.use_wandb else 'Disabled'}")
     if logger.use_wandb and logger.wandb_run_url: script_logger.info(f" WandB Project: {args.wandb_project} (Run URL: {logger.wandb_run_url})")
     script_logger.info("-" * 60)
 
-    # --- Warn if indices are same --- (Keep as is)
+    # --- Warn if indices are same ---
     if os.path.abspath(args.main_index_csv) == os.path.abspath(args.ner_index_csv): logging.warning("="*60); logging.warning("Warning: Main index and NER index files appear to be the same."); logging.warning("="*60)
 
-    # --- Update WandB Config --- (Keep as is)
+    # --- Update WandB Config ---
     if logger.use_wandb and wandb.run:
-         try: # ... (wandb config update logic) ...
+         try:
+              args_for_config=vars(args).copy()
+              current_wandb_log_file_actual=wandb.config.get("log_file_actual")
+              if "log_file" in args_for_config and current_wandb_log_file_actual is not None:
+                  del args_for_config["log_file"]
+              wandb.config.update(args_for_config, allow_val_change=True)
               script_logger.info("Updated WandB config with script arguments.")
          except Exception as e: logging.warning(f"Failed to fully update wandb config: {e}")
 
-    # --- Load Mappings and Indices --- (Keep as is)
+    # --- Load Mappings and Indices ---
     script_logger.info("Loading mappings and indices...")
     base_log_ctx = {'operation_type': 'setup'}
     mappings = parse_csv_mapping(args.mapping_csv, log_context=base_log_ctx)
@@ -1349,32 +1440,28 @@ if __name__ == "__main__":
     script_logger.info(f"Loaded {len(mappings)} unique mappings.")
     script_logger.info(f"Loaded {len(main_index)} unique main index entries.")
     script_logger.info(f"Loaded {len(ner_index)} unique NER index entries.")
-    # --- FIX 2: Correct Syntax for Exit Condition ---
-    # Exit if critical inputs are empty
+
+    # --- Exit Condition Checks ---
     if not mappings:
         script_logger.error("Mapping file loaded 0 entries. Cannot proceed. Exiting.")
-        if logger:
-            logger.summarize_and_close() # Ensure logs are closed before exiting
-        sys.exit(1) # Exit after logging and closing
-
+        if logger: logger.summarize_and_close()
+        sys.exit(1)
     if not main_index:
         script_logger.error("Main index file loaded 0 entries. Cannot proceed. Exiting.")
-        if logger:
-            logger.summarize_and_close() # Ensure logs are closed before exiting
-        sys.exit(1) # Exit after logging and closing
-    # --- END FIX 2 ---
+        if logger: logger.summarize_and_close()
+        sys.exit(1)
     if not ner_index: script_logger.warning("NER index file loaded 0 entries. Processing will continue without NER data integration.")
 
-    # --- Determine Tasks to Run (Pre-check) --- (Keep as is)
+    # --- Determine Tasks to Run (Pre-check) ---
     tasks_to_process_info, skipped_missing_index, skipped_already_complete = determine_tasks_to_run(
         mappings=mappings, main_index=main_index, ner_index=ner_index,
         output_base_dir=args.output_dir, overwrite=args.overwrite, logger=logger, log_context=base_log_ctx
     )
 
-    # --- Construct Full Task Arguments --- (Keep as is)
+    # --- Construct Full Task Arguments ---
     script_logger.info("Constructing full task arguments for processing...")
     full_tasks = []
-    for task_info in tasks_to_process_info: # ... (logic to build full_tasks list) ...
+    for task_info in tasks_to_process_info:
         old_id = task_info['old_id']; new_id = task_info['new_id']
         corpus_prefix = (re.match(r'^([a-zA-Z0-9\-_]+?)_', old_id).group(1) if re.match(r'^([a-zA-Z0-9\-_]+?)_', old_id) else "unknown_corpus")
         full_tasks.append({
@@ -1386,8 +1473,8 @@ if __name__ == "__main__":
         })
     script_logger.info(f"Prepared {len(full_tasks)} full task argument sets.")
 
-    # --- Setup Worker Wrapper and Shutdown Handler --- (Keep as is)
-    def process_document_wrapper(task_args_dict): # ... (wrapper definition) ...
+    # --- Setup Worker Wrapper and Shutdown Handler ---
+    def process_document_wrapper(task_args_dict):
         try: return process_document(**task_args_dict)
         except Exception as worker_exc:
             worker_old_id = task_args_dict.get('old_id', 'unknown'); worker_new_id = task_args_dict.get('new_id', 'unknown')
@@ -1398,11 +1485,11 @@ if __name__ == "__main__":
             return False, f"Failed: Worker Exception {type(worker_exc).__name__}"
     setup_graceful_shutdown()
 
-    # --- Execute Processing --- (Keep as is)
+    # --- Execute Processing ---
     processed_count = len(full_tasks); failed_count = 0
     script_logger.info(f"--- Starting document processing for {processed_count} tasks ---")
     executor = None; pbar = None
-    try: # ... (Main processing loop using ProcessPoolExecutor or sequential) ...
+    try:
         if processed_count == 0: script_logger.info("No documents require processing...")
         elif args.num_workers > 1:
              script_logger.info(f"Starting parallel processing with {args.num_workers} workers.")
@@ -1440,7 +1527,7 @@ if __name__ == "__main__":
         if pbar: pbar.close(); script_logger.info("Progress bar closed.")
         _executor_ref = None
 
-    # --- Final Steps --- (Keep as is)
+    # --- Final Steps ---
     script_logger.info("--- Document processing loop finished ---")
     if processed_count > 0: script_logger.info("--- Generating Token Mismatch Summary ---"); summarize_token_mismatches(args.output_dir, logger)
     else: script_logger.info("Skipping mismatch summary as no documents were processed.")
