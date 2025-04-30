@@ -33,6 +33,20 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 
+
+import pandas as pd
+import tqdm
+import wandb
+
+# --- Configure standard logging ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+script_logger = logging.getLogger("ReorgScript")
+
 # --- FIX 1: Define DummyFileLock unconditionally at the top level ---
 class DummyFileLock:
     """A dummy class that mimics filelock.FileLock for when filelock is not available or not used."""
@@ -85,21 +99,6 @@ except ImportError:
     })()
     FileLockTimeout = DummyFileLockTimeout # Assign the dummy timeout for consistent access pattern
     # --- END FIX 1 Part 2 ---
-
-
-import pandas as pd
-import tqdm
-import wandb
-
-# --- Configure standard logging ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
-script_logger = logging.getLogger("ReorgScript")
-
 
 # --- (#9) Performance Profiling Decorator ---
 def timed_operation(operation_name):
