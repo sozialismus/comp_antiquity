@@ -49,7 +49,6 @@ logging.basicConfig(
 )
 script_logger = logging.getLogger("ReorgScript")
 
-
 # --- (#9) Performance Profiling Decorator ---
 def timed_operation(operation_name):
     """Decorator to log the execution time of a function."""
@@ -274,7 +273,6 @@ def extract_main_model_outputs(
     logger: Optional[FileOperationLogger] = None, **log_ctx # Pass full context
 ) -> bool:
     """Loads main model once and extracts all related outputs via one temp script, attempting NER alignment."""
-    # (Path setup and escaping remains the same)
     docbin_path_abs = os.path.abspath(docbin_path); output_txt_joined_abs = os.path.abspath(output_txt_joined); output_txt_fullstop_abs = os.path.abspath(output_txt_fullstop)
     output_csv_lemma_abs = os.path.abspath(output_csv_lemma); output_csv_upos_abs = os.path.abspath(output_csv_upos); output_csv_stop_abs = os.path.abspath(output_csv_stop)
     output_csv_dot_abs = os.path.abspath(output_csv_dot); output_conllu_abs = os.path.abspath(output_conllu)
@@ -293,7 +291,7 @@ def extract_main_model_outputs(
     regex_p2_script_literal = escape_for_script_string(regex_pattern2_raw); regex_r2_script_literal = escape_for_script_string(regex_replace2_raw)
     regex_p3_script_literal = escape_for_script_string(regex_pattern3_raw); regex_r3_script_literal = escape_for_script_string(regex_replace3_raw)
 
-    # Construct the script content, passing the escaped patterns
+    # Construct the script content with corrected f-string escaping
     script_content = f"""# -*- coding: utf-8 -*-
 import sys, csv, spacy, os, traceback, re, json
 from difflib import SequenceMatcher
@@ -311,8 +309,9 @@ output_csv_stop=r'{output_csv_stop_esc}'
 output_csv_dot=r'{output_csv_dot_esc}'
 output_conllu=r'{output_conllu_esc}'
 ner_tags_path={ner_tags_path_repr}
-doc_id_str='{doc_id_str}'
+doc_id_str='{doc_id_str}' # This is evaluated by the outer f-string
 
+# Use double braces for inner script's f-string variables
 logging.info(f"Starting extraction for doc ID: {{doc_id_str}}")
 
 # --- Alignment Function ---
@@ -330,64 +329,42 @@ def attempt_ner_alignment(tokens, ner_tags):
     }}
     blocks_processed = 0
     for block in matcher.get_matching_blocks():
-        if block.size == 0:
-            continue
+        if block.size == 0: continue
         blocks_processed += 1
         token_start, ner_start, size = block.a, block.b, block.size
         logging.debug(f"Match block: token_idx={{token_start}}, ner_idx={{ner_start}}, size={{size}}")
         for i in range(size):
-            token_idx = token_start + i
-            ner_idx = ner_start + i
+            token_idx = token_start + i; ner_idx = ner_start + i
             if token_idx < len(aligned_tags) and ner_idx < len(ner_tags):
-                aligned_tags[token_idx] = ner_tags[ner_idx]
-                alignment_stats['aligned_count'] += 1
-                if len(mismatch_details) < 20:
-                    token_text_safe = token_texts[token_idx] if token_idx < len(token_texts) else "TOKEN_OOB"
-                    ner_tag_safe = ner_tags[ner_idx]
-                    mismatch_details.append(
-                        f"Align: tok[{{token_idx}}]='{{token_text_safe}}' "
-                        f"<-> tag[{{ner_idx}}]='{{ner_tag_safe}}'"
-                    )
+                 aligned_tags[token_idx] = ner_tags[ner_idx]
+                 alignment_stats['aligned_count'] += 1
+                 if len(mismatch_details) < 20:
+                     token_text_safe = token_texts[token_idx] if token_idx < len(token_texts) else "TOKEN_OOB"
+                     ner_tag_safe = ner_tags[ner_idx]
+                     # *** CORRECTED: Double braces for inner f-string vars ***
+                     mismatch_details.append(f"Align: tok[{{{{token_idx}}}}]='{{{{token_text_safe}}}}' <-> tag[{{{{ner_idx}}}}]='{{{{ner_tag_safe}}}}'")
             else:
-                logging.warning(
-                    f"Alignment index out of bounds: token_idx={{token_idx}} (max={{len(aligned_tags)-1}}), "
-                    f"ner_idx={{ner_idx}} (max={{len(ner_tags)-1}})"
-                )
+                 logging.warning(f"Alignment index out of bounds: token_idx={{token_idx}} (max={{len(aligned_tags)-1}}), ner_idx={{ner_idx}} (max={{len(ner_tags)-1}})")
 
-    logging.info(f"Alignment processed {{blocks_processed}} matching blocks. Total aligned: {{alignment_stats['aligned_count']}}")
+    logging.info(f"Alignment processed {{blocks_processed}} matching blocks. Total aligned: {{{{alignment_stats['aligned_count']}}}}")
     if alignment_stats['aligned_count'] > 0:
-        alignment_stats['success_rate'] = (
-            alignment_stats['aligned_count'] / len(tokens)
-            if len(tokens) > 0 else 0
-        )
-        alignment_stats['status'] = (
-            'success'
-            if alignment_stats['aligned_count'] == len(tokens)
-            else 'partial'
-        )
-        if alignment_stats['status'] == 'partial':
-            unaligned_tokens = len(tokens) - alignment_stats['aligned_count']
-            logging.info(f"{{unaligned_tokens}} tokens could not be aligned.")
+         alignment_stats['success_rate'] = alignment_stats['aligned_count'] / len(tokens) if len(tokens) > 0 else 0
+         alignment_stats['status'] = 'success' if alignment_stats['aligned_count'] == len(tokens) else 'partial'
+         if alignment_stats['status'] == 'partial':
+             unaligned_tokens = len(tokens) - alignment_stats['aligned_count']
+             logging.info(f"{{unaligned_tokens}} tokens could not be aligned.")
 
-    # define threshold in inner script
+    # *** Define success_threshold locally ***
     success_threshold = 0.5
-
     if alignment_stats['success_rate'] < success_threshold and alignment_stats['status'] != 'success':
-        logging.warning(
-            f"Alignment quality low ({{alignment_stats['success_rate']:.1%}} < {{success_threshold*100:.0f}}%). "
-            "Discarding alignment results."
-        )
+        # *** CORRECTED: Double/Quad braces for inner f-string expressions ***
+        logging.warning(f"Alignment quality low ({{{{alignment_stats['success_rate']:.1%}}}} < {{{{success_threshold*100:.0f}}}}%). Discarding alignment results.")
         alignment_stats['status'] = 'failed_low_quality'
-        mismatch_details.append(
-            f"Failed: Alignment rate below threshold ({{success_threshold:.1%}})"
-        )
+        # *** CORRECTED: Double braces for inner f-string expression ***
+        mismatch_details.append(f"Failed: Alignment rate below threshold ({{success_threshold:.1%}})")
         return None, alignment_stats
-
-    logging.info(
-        f"Alignment Result: Status={{alignment_stats['status']}}, "
-        f"Rate={{alignment_stats['success_rate']:.2%}} "
-        f"(Aligned={{alignment_stats['aligned_count']}}/{{len(tokens)}})"
-    )
+    # *** CORRECTED: Double/Quad braces for inner f-string expressions ***
+    logging.info(f"Alignment Result: Status={{{{alignment_stats['status']}}}}, Rate={{{{alignment_stats['success_rate']:.2%}}}} (Aligned={{{{alignment_stats['aligned_count']}}}}/{{len(tokens)}})")
     return aligned_tags, alignment_stats
 # --- End Alignment Function ---
 
@@ -415,11 +392,11 @@ try:
         pat1 = r'{regex_p1_script_literal}'; rep1 = r'{regex_r1_script_literal}'
         pat2 = r'{regex_p2_script_literal}'; rep2 = r'{regex_r2_script_literal}'
         pat3 = r'{regex_p3_script_literal}'; rep3 = r'{regex_r3_script_literal}'
-        logging.debug(f"Applying regex: {{pat1}} -> {{rep1}}")
+        logging.debug("Applying regex: %s -> %s" % (pat1, rep1))
         tfs = re.sub(pat1, rep1, doc_text)
-        logging.debug(f"Applying regex: {{pat2}} -> {{rep2}}")
+        logging.debug("Applying regex: %s -> %s" % (pat2, rep2))
         tfs = re.sub(pat2, rep2, tfs)
-        logging.debug(f"Applying regex: {{pat3}} -> {{rep3}}")
+        logging.debug("Applying regex: %s -> %s" % (pat3, rep3))
         tfs = re.sub(pat3, rep3, tfs).strip()
         with open(output_txt_fullstop,'w',encoding='utf-8') as f: f.write(tfs)
     except Exception as fs_e: logging.warning(f"Failed to generate fullstop format: {{fs_e}}", exc_info=True)
@@ -475,7 +452,7 @@ try:
             if mismatch_detected:
                 fo.write(f"# ner_token_mismatch = True\\n"); fo.write(f"# main_model_tokens = {{num_tokens}}\\n"); fo.write(f"# ner_model_tags = {{num_ner_tags}}\\n")
                 if alignment_info:
-                    fo.write(f"# ner_alignment_status = {{alignment_info.get('status','?')}}\\n"); fo.write(f"# ner_alignment_rate = {{alignment_info.get('success_rate', 0.0):.4f}}\\n")
+                    fo.write(f"# ner_alignment_status = {{{{alignment_info.get('status','?')}}}}\\n"); fo.write(f"# ner_alignment_rate = {{{{alignment_info.get('success_rate', 0.0):.4f}}}}\\n")
                     if alignment_info.get('status') in ('partial', 'failed_low_quality') and alignment_info.get('details'):
                          details_preview = "; ".join(alignment_info['details'][:3]); fo.write(f"# ner_alignment_details_preview = {details_preview}\\n")
             sidc = 1
@@ -491,8 +468,8 @@ try:
                         abs_token_index = t.i
                         if abs_token_index < len(ner_tags_to_use):
                             nt = ner_tags_to_use[abs_token_index];
-                            if nt and nt != 'O': mp.append(f"NER={{nt}}")
-                        else: logging.warning(f"Token index {{abs_token_index}} out of bounds for ner_tags_to_use (len={{len(ner_tags_to_use)}}) in sentence {{sidc}}")
+                            if nt and nt != 'O': mp.append(f"NER={{nt}}") # Needs double braces for nt
+                        else: logging.warning(f"Token index {{abs_token_index}} out of bounds for ner_tags_to_use (len={{len(ner_tags_to_use)}}) in sentence {{sidc}}") # Needs double braces
                     if (t.i + 1) < len(doc) and doc[t.i + 1].idx == (t.idx + len(t.text)): mp.append("SpaceAfter=No")
                     mf = "|".join(mp) if mp else "_"; dpr = str(t.dep_).strip() if t.dep_ else "dep";
                     if not dpr: dpr = "dep"; dpf = "_"
@@ -605,20 +582,15 @@ sys.exit(0)
     })
     return run_python_script_in_conda_env(conda_env, script_content, run_log_ctx, logger, timeout=600)
 
-
 # (Keep summarize_token_mismatches as is)
 @timed_operation("summarize_mismatches")
 def summarize_token_mismatches(output_base_dir: str, logger: Optional[FileOperationLogger] = None):
-    base_path = Path(output_base_dir)
-    info_files = list(base_path.glob("**/*_ner_mismatch_info.json"))
-    error_files = list(base_path.glob("**/*_ner_error_info.json"))
-    all_files = info_files + error_files
+    base_path = Path(output_base_dir); info_files = list(base_path.glob("**/*_ner_mismatch_info.json"))
+    error_files = list(base_path.glob("**/*_ner_error_info.json")); all_files = info_files + error_files
     script_logger.info(f"Found {len(info_files)} mismatch info files and {len(error_files)} error info files to summarize in {output_base_dir}.")
     if not all_files: script_logger.info("No mismatch or error info files found. Skipping summary."); return None
-    total_docs_checked = 0; mismatched_docs_count = 0; error_docs_count = 0
-    alignment_attempts = 0; alignment_successes = 0
-    token_diff_stats = Counter(); alignment_statuses = Counter(); error_messages = Counter()
-    processed_doc_ids = set()
+    total_docs_checked = 0; mismatched_docs_count = 0; error_docs_count = 0; alignment_attempts = 0; alignment_successes = 0
+    token_diff_stats = Counter(); alignment_statuses = Counter(); error_messages = Counter(); processed_doc_ids = set()
     for info_file in all_files:
         try:
             with open(info_file, 'r', encoding='utf-8') as f: data = json.load(f)
@@ -639,20 +611,13 @@ def summarize_token_mismatches(output_base_dir: str, logger: Optional[FileOperat
         except Exception as e: script_logger.warning(f"Error processing info file {info_file}: {e}", exc_info=True)
     mismatch_percentage = (mismatched_docs_count / total_docs_checked * 100) if total_docs_checked else 0
     alignment_success_rate = (alignment_successes / alignment_attempts * 100) if alignment_attempts else 0
-    summary = {
-        "total_documents_with_info_file": total_docs_checked,"documents_with_ner_processing_error": error_docs_count,
-        "documents_with_token_mismatch": mismatched_docs_count,"mismatch_percentage_of_checked": round(mismatch_percentage, 2),
-        "alignment_attempts_on_mismatched": alignment_attempts,"alignment_successes_incl_partial": alignment_successes,
-        "alignment_success_rate_incl_partial": round(alignment_success_rate, 2),"alignment_status_counts": dict(alignment_statuses),
-        "token_difference_distribution": {str(k): v for k, v in sorted(token_diff_stats.items())},"ner_processing_error_counts": dict(error_messages)
-    }
-    summary_file = base_path / "corpus_token_mismatch_summary.json"
-    log_ctx_summary = {'old_id': 'corpus', 'new_id': 'summary', 'corpus_prefix': 'all', 'operation_type': 'mismatch_summary', 'file_type': 'json', 'source_file': 'multiple', 'destination_file': str(summary_file)}
+    summary = {"total_documents_with_info_file": total_docs_checked,"documents_with_ner_processing_error": error_docs_count, "documents_with_token_mismatch": mismatched_docs_count,"mismatch_percentage_of_checked": round(mismatch_percentage, 2), "alignment_attempts_on_mismatched": alignment_attempts,"alignment_successes_incl_partial": alignment_successes, "alignment_success_rate_incl_partial": round(alignment_success_rate, 2),"alignment_status_counts": dict(alignment_statuses), "token_difference_distribution": {str(k): v for k, v in sorted(token_diff_stats.items())},"ner_processing_error_counts": dict(error_messages)}
+    summary_file = base_path / "corpus_token_mismatch_summary.json"; log_ctx_summary = {'old_id': 'corpus', 'new_id': 'summary', 'corpus_prefix': 'all', 'operation_type': 'mismatch_summary', 'file_type': 'json', 'source_file': 'multiple', 'destination_file': str(summary_file)}
     try:
         with open(summary_file, 'w', encoding='utf-8') as f: json.dump(summary, f, indent=2)
         script_logger.info(f"Token mismatch summary written to: {summary_file}")
         summary_details = f"Checked:{total_docs_checked}, Errors:{error_docs_count}, Mismatched:{mismatched_docs_count} ({mismatch_percentage:.1f}%), Align Success Rate:{alignment_success_rate:.1f}% ({alignment_successes}/{alignment_attempts})"
-        script_logger.info(summary_details)
+        script_logger.info(summary_details);
         if logger: logger.log_operation(**log_ctx_summary, status='success', details=summary_details)
     except Exception as e:
         script_logger.error(f"Failed to write token mismatch summary: {e}", exc_info=True)
@@ -672,8 +637,7 @@ def validate_output_dir(dir_path: str) -> bool:
     if not dir_path: script_logger.error("Output directory path cannot be empty."); return False
     abs_path = os.path.abspath(dir_path)
     try:
-        os.makedirs(abs_path, exist_ok=True)
-        test_file = os.path.join(abs_path, f".perm_check_{os.getpid()}")
+        os.makedirs(abs_path, exist_ok=True); test_file = os.path.join(abs_path, f".perm_check_{os.getpid()}")
         with open(test_file, "w") as f: f.write("test"); os.remove(test_file)
         script_logger.debug(f"Validated output directory: {abs_path}"); return True
     except OSError as e: script_logger.error(f"Cannot create or write to output dir '{abs_path}': {e}"); return False
@@ -683,8 +647,7 @@ def validate_output_dir(dir_path: str) -> bool:
 def load_index(index_path: str, log_context: Dict = None) -> Dict[str, str]:
     index = {}; abs_index_path = os.path.abspath(index_path)
     try:
-        df = pd.read_csv(abs_index_path, low_memory=False)
-        required_path_col = 'processed_path'; id_col = 'document_id'
+        df = pd.read_csv(abs_index_path, low_memory=False); required_path_col = 'processed_path'; id_col = 'document_id'
         if id_col not in df.columns: logging.error(f"Index file '{abs_index_path}' missing required column '{id_col}'."); return {}
         if required_path_col not in df.columns: logging.error(f"Index file '{abs_index_path}' missing required column '{required_path_col}'."); return {}
         duplicates = 0; null_paths = 0
@@ -707,8 +670,7 @@ def load_index(index_path: str, log_context: Dict = None) -> Dict[str, str]:
 def parse_csv_mapping(csv_path: str, log_context: Dict = None) -> Dict[str, str]:
     mappings = {}; abs_csv_path = os.path.abspath(csv_path)
     try:
-        df = pd.read_csv(abs_csv_path, low_memory=False)
-        id_col = 'document_id'; sort_col = 'sort_id'
+        df = pd.read_csv(abs_csv_path, low_memory=False); id_col = 'document_id'; sort_col = 'sort_id'
         if id_col not in df.columns: logging.error(f"Mapping file '{abs_csv_path}' missing required column '{id_col}'."); return {}
         if sort_col not in df.columns: logging.error(f"Mapping file '{abs_csv_path}' missing required column '{sort_col}'."); return {}
         duplicates = 0; invalid_sort_ids = 0; missing_sort_ids = 0
@@ -850,7 +812,6 @@ def process_document(
     if logger: logger.log_operation(**current_log_context, operation_type="process_end", file_type="document", status="success" if overall_success else "failed", details=f"Finished. Final Status: {final_status_msg}")
     return overall_success, final_status_msg
 
-
 # (Keep setup_graceful_shutdown as is)
 _shutdown_requested = False
 def setup_graceful_shutdown():
@@ -910,7 +871,6 @@ def determine_tasks_to_run(
     if skipped_missing_index_count > 0: script_logger.info(f"Skipped {skipped_missing_index_count} tasks due to missing/invalid main docbin index entry or file.")
     if skipped_already_complete_count > 0: script_logger.info(f"Skipped {skipped_already_complete_count} tasks because key output files already exist (overwrite=False).")
     return tasks_to_run, skipped_missing_index_count, skipped_already_complete_count
-
 
 # --- Main Execution ---
 if __name__ == "__main__":
@@ -973,27 +933,9 @@ if __name__ == "__main__":
     ner_index = load_index(args.ner_index_csv, log_context=base_log_ctx)
     script_logger.info(f"Loaded {len(mappings)} unique mappings."); script_logger.info(f"Loaded {len(main_index)} unique main index entries."); script_logger.info(f"Loaded {len(ner_index)} unique NER index entries.")
 
-    if not mappings:
-        script_logger.error(
-            "Mapping file loaded 0 entries. Cannot proceed. Exiting."
-        )
-        if logger:
-            logger.summarize_and_close()
-            sys.exit(1)
-
-            if not main_index:
-                script_logger.error(
-                    "Main index file loaded 0 entries. Cannot proceed. Exiting."
-                )
-                if logger:
-                    logger.summarize_and_close()
-                    sys.exit(1)
-
-                    if not ner_index:
-                        script_logger.warning(
-                            "NER index file loaded 0 entries. "
-                            "Processing will continue without NER data integration."
-                        )
+    if not mappings: script_logger.error("Mapping file loaded 0 entries. Cannot proceed. Exiting."); if logger: logger.summarize_and_close(); sys.exit(1)
+    if not main_index: script_logger.error("Main index file loaded 0 entries. Cannot proceed. Exiting."); if logger: logger.summarize_and_close(); sys.exit(1)
+    if not ner_index: script_logger.warning("NER index file loaded 0 entries. Processing will continue without NER data integration.")
 
     tasks_to_process_info, skipped_missing_index, skipped_already_complete = determine_tasks_to_run(
         mappings=mappings, main_index=main_index, ner_index=ner_index,
