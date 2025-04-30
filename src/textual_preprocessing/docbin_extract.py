@@ -342,11 +342,22 @@ def attempt_ner_alignment(tokens, ner_tags):
                      token_text_safe = token_texts[token_idx] if token_idx < len(token_texts) else "TOKEN_OOB"
                      ner_tag_safe = ner_tags[ner_idx]
                      # *** CORRECTED: Double braces for inner f-string vars ***
-                     mismatch_details.append(f"Align: tok[{{{{token_idx}}}}]='{{{{token_text_safe}}}}' <-> tag[{{{{ner_idx}}}}]='{{{{ner_tag_safe}}}}'")
-            else:
-                 logging.warning(f"Alignment index out of bounds: token_idx={{token_idx}} (max={{len(aligned_tags)-1}}), ner_idx={{ner_idx}} (max={{len(ner_tags)-1}})")
+                     mismatch_details.append(
+                         f"Align: tok[{{token_idx}}]='{{token_text_safe}}' "
+                         f"<-> tag[{{ner_idx}}]='{{ner_tag_safe}}'"
+                     )
 
-    logging.info(f"Alignment processed {{blocks_processed}} matching blocks. Total aligned: {{{{alignment_stats['aligned_count']}}}}")
+            else:
+                logging.warning(
+                    f"Alignment quality low ({{alignment_stats['success_rate']:.1%}} "
+                    f"< {{success_threshold*100:.0f}}%). Discarding alignment results."
+                )
+
+                logging.info(
+                    f"Alignment Result: Status={{alignment_stats['status']}}, "
+                    f"Rate={{alignment_stats['success_rate']:.2%}} "
+                    f"(Aligned={{alignment_stats['aligned_count']}}/{{len(tokens)}})"
+                )
     if alignment_stats['aligned_count'] > 0:
          alignment_stats['success_rate'] = alignment_stats['aligned_count'] / len(tokens) if len(tokens) > 0 else 0
          alignment_stats['status'] = 'success' if alignment_stats['aligned_count'] == len(tokens) else 'partial'
@@ -452,10 +463,12 @@ try:
             if mismatch_detected:
                 fo.write(f"# ner_token_mismatch = True\\n"); fo.write(f"# main_model_tokens = {{num_tokens}}\\n"); fo.write(f"# ner_model_tags = {{num_ner_tags}}\\n")
                 if alignment_info:
-                    fo.write(f"# ner_alignment_status = {{{{alignment_info.get('status','?')}}}}\\n"); fo.write(f"# ner_alignment_rate = {{{{alignment_info.get('success_rate', 0.0):.4f}}}}\\n")
+                    fo.write(f"# ner_alignment_status = { {alignment_info.get('status','?')} }\\n")
+                    fo.write(f"# ner_alignment_rate = { {alignment_info.get('success_rate', 0.0):.4f} }\\n")
                     if alignment_info.get('status') in ('partial', 'failed_low_quality') and alignment_info.get('details'):
-                         details_preview = "; ".join(alignment_info['details'][:3]); fo.write(f"# ner_alignment_details_preview = {details_preview}\\n")
-            sidc = 1
+                       details_preview = "; ".join(alignment_info['details'][:3])
+                       # double-brace to escape into the inner script’s f-string
+                       fo.write(f"# ner_alignment_details_preview = {{details_preview}}\n")            sidc = 1
             for sent_idx, sent in enumerate(doc.sents):
                 stc=str(sent.text).replace('\\n',' ').replace('\\r','').strip()
                 fo.write(f"\\n# sent_id = {{doc_id_str}}-{{sidc}}\\n"); fo.write(f"# text = {{stc}}\\n")
