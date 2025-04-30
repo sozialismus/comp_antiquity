@@ -287,7 +287,7 @@ def extract_main_model_outputs(
     regex_p2_script_literal = escape_for_script_string(regex_pattern2_raw); regex_r2_script_literal = escape_for_script_string(regex_replace2_raw)
     regex_p3_script_literal = escape_for_script_string(regex_pattern3_raw); regex_r3_script_literal = escape_for_script_string(regex_replace3_raw)
 
-    # Construct the script content with corrected f-string escaping
+    # Construct the script content with simplified inner formatting for logging
     script_content = f"""# -*- coding: utf-8 -*-
 import sys, csv, spacy, os, traceback, re, json
 from difflib import SequenceMatcher
@@ -295,92 +295,57 @@ from spacy.tokens import DocBin
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] TempScript: %(message)s', stream=sys.stderr)
 
-# --- Paths passed from main script ---
-docbin_path=r'{docbin_path_esc}'
-output_txt_joined=r'{output_txt_joined_esc}'
-output_txt_fullstop=r'{output_txt_fullstop_esc}'
-output_csv_lemma=r'{output_csv_lemma_esc}'
-output_csv_upos=r'{output_csv_upos_esc}'
-output_csv_stop=r'{output_csv_stop_esc}'
-output_csv_dot=r'{output_csv_dot_esc}'
-output_conllu=r'{output_conllu_esc}'
-ner_tags_path={ner_tags_path_repr}
-doc_id_str='{doc_id_str}' # Outer evaluates this
+docbin_path=r'{docbin_path_esc}'; output_txt_joined=r'{output_txt_joined_esc}'; output_txt_fullstop=r'{output_txt_fullstop_esc}'
+output_csv_lemma=r'{output_csv_lemma_esc}'; output_csv_upos=r'{output_csv_upos_esc}'; output_csv_stop=r'{output_csv_stop_esc}'
+output_csv_dot=r'{output_csv_dot_esc}'; output_conllu=r'{output_conllu_esc}'; ner_tags_path={ner_tags_path_repr}; doc_id_str='{doc_id_str}'
 
-logging.info(f"Starting extraction for doc ID: {{doc_id_str}}") # Double brace
+logging.info("Starting extraction for doc ID: %s" % doc_id_str)
 
 # --- Alignment Function ---
 def attempt_ner_alignment(tokens, ner_tags):
-    # Use double braces {{...}} for simple variables local to this scope
-    # Use quadruple braces {{{...}}} for expressions/formats within inner f-strings
-    logging.info(f"Entering attempt_ner_alignment. len(tokens)={{len(tokens)}}, len(ner_tags)={{len(ner_tags)}}")
+    logging.info("Entering attempt_ner_alignment. len(tokens)=%d, len(ner_tags)=%d" % (len(tokens), len(ner_tags)))
     token_texts = [str(t.text) for t in tokens]
-    logging.debug(f"Token texts (first 10): {{token_texts[:10]}}...")
+    # logging.debug("Token texts (first 10): %s..." % (token_texts[:10],)) # Avoid complex slicing in debug log
     matcher = SequenceMatcher(None, token_texts, ner_tags, autojunk=False)
-    aligned_tags = [None] * len(tokens)
-    mismatch_details = []
-    alignment_stats = {{
-        'status': 'failed_no_matches', 'aligned_count': 0,
-        'total_tokens': len(tokens), 'total_ner_tags': len(ner_tags),
-        'success_rate': 0.0, 'details': mismatch_details
-    }}
+    aligned_tags = [None] * len(tokens); mismatch_details = []
+    alignment_stats = {{'status': 'failed_no_matches', 'aligned_count': 0, 'total_tokens': len(tokens), 'total_ner_tags': len(ner_tags), 'success_rate': 0.0, 'details': mismatch_details}}
     blocks_processed = 0
     for block in matcher.get_matching_blocks():
         if block.size == 0: continue
         blocks_processed += 1
         token_start, ner_start, size = block.a, block.b, block.size
-        logging.debug(f"Match block: token_idx={{token_start}}, ner_idx={{ner_start}}, size={{size}}")
+        logging.debug("Match block: token_idx=%d, ner_idx=%d, size=%d" % (token_start, ner_start, size))
         for i in range(size):
             token_idx = token_start + i; ner_idx = ner_start + i
             if token_idx < len(aligned_tags) and ner_idx < len(ner_tags):
-                 aligned_tags[token_idx] = ner_tags[ner_idx]
-                 alignment_stats['aligned_count'] += 1
+                 aligned_tags[token_idx] = ner_tags[ner_idx]; alignment_stats['aligned_count'] += 1
                  if len(mismatch_details) < 20:
                      token_text_safe = token_texts[token_idx] if token_idx < len(token_texts) else "TOKEN_OOB"
                      ner_tag_safe = ner_tags[ner_idx]
-                     # Quadruple braces for inner f-string variables
-                     mismatch_details.append(f"Align: tok[{{{{token_idx}}}}]='{{{{token_text_safe}}}}' <-> tag[{{{{ner_idx}}}}]='{{{{ner_tag_safe}}}}'")
+                     # Use simple .format() here - no f-string
+                     mismatch_details.append("Align: tok[{0}]='{1}' <-> tag[{2}]='{3}'".format(token_idx, token_text_safe, ner_idx, ner_tag_safe))
             else:
-                 # Double/Quad braces for inner f-string variables/expressions
-                 logging.warning(f"Alignment index out of bounds: token_idx={{token_idx}} (max={{{{len(aligned_tags)-1}}}}), ner_idx={{ner_idx}} (max={{{{len(ner_tags)-1}}}})")
+                 logging.warning("Alignment index out of bounds: token_idx=%d (max=%d), ner_idx=%d (max=%d)" % (token_idx, len(aligned_tags)-1, ner_idx, len(ner_tags)-1))
 
-    # Quadruple braces for dict access
-    logging.info(f"Alignment processed {{blocks_processed}} matching blocks. Total aligned: {{{{alignment_stats['aligned_count']}}}}")
+    logging.info("Alignment processed %d matching blocks. Total aligned: %d" % (blocks_processed, alignment_stats['aligned_count']))
     if alignment_stats['aligned_count'] > 0:
          alignment_stats['success_rate'] = alignment_stats['aligned_count'] / len(tokens) if len(tokens) > 0 else 0
          alignment_stats['status'] = 'success' if alignment_stats['aligned_count'] == len(tokens) else 'partial'
          if alignment_stats['status'] == 'partial':
              unaligned_tokens = len(tokens) - alignment_stats['aligned_count']
-             logging.info(f"{{unaligned_tokens}} tokens could not be aligned.") # Double brace
+             logging.info("%d tokens could not be aligned." % unaligned_tokens)
 
     success_threshold = 0.5 # Define locally
     if alignment_stats['success_rate'] < success_threshold and alignment_stats['status'] != 'success':
-        # *** CORRECTED: Use simpler formatting ***
-        logging.warning(
-            "Alignment quality low ({:.1%} < {:.0f}%). Discarding alignment results.".format(
-                alignment_stats['success_rate'], success_threshold*100
-            )
-        )
-        # *** END CORRECTION ***
+        # Use simpler formatting for the warning
+        logging.warning("Alignment quality low ({:.1%}) < {:.0f}%). Discarding alignment results.".format(alignment_stats['success_rate'], success_threshold * 100))
         alignment_stats['status'] = 'failed_low_quality'
-        # *** CORRECTED: Use simpler formatting ***
-        mismatch_details.append(
-            "Failed: Alignment rate below threshold ({:.1%})".format(success_threshold)
-        )
+        mismatch_details.append("Failed: Alignment rate below threshold ({:.1%})".format(success_threshold))
         return None, alignment_stats
-    # *** CORRECTED: Use simpler formatting ***
-    logging.info(
-        "Alignment Result: Status={status}, Rate={rate:.2%} (Aligned={aligned}/{total})".format(
-            status=alignment_stats['status'],
-            rate=alignment_stats['success_rate'],
-            aligned=alignment_stats['aligned_count'],
-            total=len(tokens)
-        )
-    )
+    logging.info("Alignment Result: Status={status}, Rate={rate:.2%} (Aligned={aligned}/{total})".format(status=alignment_stats['status'], rate=alignment_stats['success_rate'], aligned=alignment_stats['aligned_count'], total=len(tokens)))
     return aligned_tags, alignment_stats
 # --- End Alignment Function ---
 
-# Use simple formatting for most logging below to avoid f-string issues
 dirs_to_check=set([os.path.dirname(p) for p in [output_txt_joined,output_txt_fullstop,output_csv_lemma,output_csv_upos,output_csv_stop,output_csv_dot,output_conllu] if p])
 for d in dirs_to_check:
     if d:
@@ -518,6 +483,7 @@ sys.exit(0)
         'file_type': 'main-model-outputs'
     })
     return run_python_script_in_conda_env(conda_env, script_content, run_log_ctx, logger, timeout=1200)
+
 
 # (Keep extract_ner_model_outputs as is)
 @timed_operation("extract_ner_outputs")
@@ -941,25 +907,16 @@ if __name__ == "__main__":
     ner_index = load_index(args.ner_index_csv, log_context=base_log_ctx)
     script_logger.info(f"Loaded {len(mappings)} unique mappings."); script_logger.info(f"Loaded {len(main_index)} unique main index entries."); script_logger.info(f"Loaded {len(ner_index)} unique NER index entries.")
 
-    # --- Exit Condition Checks ---
+    # --- CORRECTED Exit Condition Checks ---
     if not mappings:
         script_logger.error("Mapping file loaded 0 entries. Cannot proceed. Exiting.")
-        if logger:
-            logger.summarize_and_close() # Ensure logs are closed before exiting
-        sys.exit(1) # Exit after logging and closing
-
+        if logger: logger.summarize_and_close()
+        sys.exit(1)
     if not main_index:
         script_logger.error("Main index file loaded 0 entries. Cannot proceed. Exiting.")
-        if logger:
-            logger.summarize_and_close() # Ensure logs are closed before exiting
-        sys.exit(1) # Exit after logging and closing
-
-    # This check is separate and does not exit
-    if not ner_index:
-        script_logger.warning(
-            "NER index file loaded 0 entries. "
-            "Processing will continue without NER data integration."
-        )
+        if logger: logger.summarize_and_close()
+        sys.exit(1)
+    if not ner_index: script_logger.warning("NER index file loaded 0 entries. Processing will continue without NER data integration.")
     # --- END CORRECTION ---
 
     tasks_to_process_info, skipped_missing_index, skipped_already_complete = determine_tasks_to_run(
