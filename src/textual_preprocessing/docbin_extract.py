@@ -3,10 +3,10 @@
 Script to reorganize corpus documents according to the database schema.
 Reads document mappings from CSV and uses indices to locate docbin files.
 Extracts various formats (TXT, CSVs, CoNLL-U) using specified spaCy models
-in separate conda environments via temporary scripts. Attempts NER tag alignment.
+in separate conda environments via EXTERNAL WORKER SCRIPTS. Attempts NER tag alignment.
 Includes NER tags in CoNLL-U MISC column and detailed mismatch logging.
 Includes comprehensive logging via wandb and CSV. Enhanced with validation,
-profiling, and graceful shutdown. **File locking has been removed.**
+profiling, and graceful shutdown.
 
 CSV Delimiter Confirmation: All CSV files read or written by this script
 use COMMAS (,) as delimiters. This includes the input mapping/index CSVs
@@ -31,8 +31,6 @@ from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
-
-# --- File Locking Removed ---
 
 import pandas as pd
 import tqdm
@@ -69,68 +67,101 @@ def timed_operation(operation_name):
         return wrapper
     return decorator
 
-# --- Utility function (run_python_script_in_conda_env) ---
-@timed_operation("run_conda_script")
-def run_python_script_in_conda_env(
-    conda_env: str, script_content: str, log_context: Dict[str, Any],
-    logger: Optional['FileOperationLogger'] = None, timeout: int = 300
+# --- Refactored Utility function to run EXTERNAL worker scripts ---
+@timed_operation("run_conda_worker")
+def run_worker_script_in_conda_env(
+    conda_env: str,
+    worker_script_path: str,
+    script_args: Dict[str, str], # Dict of {"--arg_name": "value"}
+    log_context: Dict[str, Any],
+    logger: Optional['FileOperationLogger'] = None,
+    timeout: int = 600 # Default timeout for worker scripts
 ) -> bool:
-    """Writes python code to a temp file and runs it in a specified conda env."""
-    temp_script_fd, temp_script_path = tempfile.mkstemp(suffix='.py', text=True)
-    os.close(temp_script_fd)
+    """Runs an external Python worker script in a specified conda env, passing arguments."""
     success = False
-    log_file_type_for_run = 'extract_script'
-    log_op_type_for_run = "extract"
+    # Use absolute path for the worker script
+    abs_worker_script_path = os.path.abspath(worker_script_path)
+    if not os.path.exists(abs_worker_script_path):
+        err_msg = f"Worker script not found: {abs_worker_script_path}"
+        script_logger.error(err_msg)
+        if logger: logger.log_operation(**log_context, operation_type="setup_worker", status="failed", details=err_msg)
+        return False
+
+    # Construct the command line arguments
+    # Use a list for subprocess.run when shell=False (safer)
+    cmd_list = ["conda", "run", "-n", conda_env, "python", abs_worker_script_path]
+    for arg, value in script_args.items():
+        cmd_list.append(arg)
+        if value is not None: # Only add value if it's not None
+             cmd_list.append(str(value)) # Ensure value is string
+
+    script_logger.debug(f"Executing command: {' '.join(cmd_list)}") # Log for debugging
+
+    # Define log types for this function's logging
+    log_op_type = f"worker_{Path(worker_script_path).stem}" # e.g., worker__extract_ner_worker
+    log_file_type = "script_execution"
 
     try:
-        with open(temp_script_path, 'w', encoding='utf-8') as f_script:
-            f_script.write("#!/usr/bin/env python3\n"); f_script.write("# -*- coding: utf-8 -*-\n"); f_script.write(script_content)
-        cmd = f"conda run -n {conda_env} python {temp_script_path}"
-        script_logger.debug(f"Executing command: {cmd}")
-        result = subprocess.run(cmd, shell=True, check=False, capture_output=True, text=True, timeout=timeout, encoding='utf-8')
+        # Run the subprocess
+        result = subprocess.run(
+            cmd_list,
+            check=False, # Don't raise exception on non-zero exit, check returncode manually
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            encoding='utf-8',
+            shell=False # Set shell=False when passing cmd as list
+        )
 
         stderr_output = result.stderr.strip() if result.stderr else ""
         stdout_output = result.stdout.strip() if result.stdout else ""
 
         if result.returncode != 0:
-             error_details = f"Command failed (Exit Code {result.returncode}): {cmd}\nStderr: {stderr_output}\nStdout: {stdout_output}"
+             error_details = f"Worker script {Path(worker_script_path).name} failed (Exit Code {result.returncode})\n" \
+                             f"Command: {' '.join(cmd_list)}\nStderr: {stderr_output}\nStdout: {stdout_output}"
              if logger:
-                 clean_ctx = dict(log_context); clean_ctx.pop("file_type", None)
-                 logger.log_operation(**clean_ctx, operation_type=log_op_type_for_run, file_type=log_file_type_for_run, status="failed", details=error_details)
+                 clean_ctx = dict(log_context); clean_ctx.pop("file_type", None) # Avoid kwarg conflict
+                 logger.log_operation(**clean_ctx, operation_type=log_op_type, file_type=log_file_type, status="failed", details=error_details)
              success = False
         else:
             success = True
-
-        noisy_warnings = ["FutureWarning: You are using `torch.load`"]
-        if stderr_output and not any(warning in stderr_output for warning in noisy_warnings) and not stderr_output.startswith("DEBUG") and logger:
-             clean_ctx = dict(log_context); clean_ctx.pop("file_type", None)
-             logger.log_operation(**clean_ctx, operation_type=log_op_type_for_run, file_type=log_file_type_for_run, status="warning", details=f"Extraction script stderr: {stderr_output}")
+            # Log stderr as warning even on success if it contains relevant info
+            noisy_warnings = ["FutureWarning: You are using `torch.load`"] # Add other noisy warnings if needed
+            if stderr_output and not any(warning in stderr_output for warning in noisy_warnings):
+                 if logger:
+                     clean_ctx = dict(log_context); clean_ctx.pop("file_type", None)
+                     logger.log_operation(**clean_ctx, operation_type=log_op_type, file_type=log_file_type, status="warning", details=f"Worker script stderr: {stderr_output}")
 
     except subprocess.TimeoutExpired as e:
          stderr_output = e.stderr.strip() if e.stderr else "N/A"; stdout_output = e.stdout.strip() if e.stdout else "N/A"
-         error_details = f"Command timed out ({e.timeout}s): {e.cmd}\nStderr: {stderr_output}\nStdout: {stdout_output}"
+         error_details = f"Worker script {Path(worker_script_path).name} timed out ({timeout}s)\n" \
+                         f"Command: {' '.join(cmd_list)}\nStderr: {stderr_output}\nStdout: {stdout_output}"
          if logger:
              clean_ctx = dict(log_context); clean_ctx.pop("file_type", None)
-             logger.log_operation(**clean_ctx, operation_type=log_op_type_for_run, file_type=log_file_type_for_run, status="failed", details=error_details)
+             logger.log_operation(**clean_ctx, operation_type=log_op_type, file_type=log_file_type, status="failed", details=error_details)
          success = False
-    except Exception as e:
+    except FileNotFoundError as e: # Catch if conda or python is not found
+        error_details = f"Error running worker: Command or interpreter not found. Check conda env ('{conda_env}') and PATH.\nError: {e}\nCommand: {' '.join(cmd_list)}"
+        script_logger.error(error_details)
         if logger:
             clean_ctx = dict(log_context); clean_ctx.pop("file_type", None)
-            logger.log_operation(**clean_ctx, operation_type=log_op_type_for_run, file_type=log_file_type_for_run, status="failed", details=f"Unexpected error setting up/running temp script: {type(e).__name__}: {e}")
+            logger.log_operation(**clean_ctx, operation_type=log_op_type, file_type=log_file_type, status="failed", details=error_details)
         success = False
-    finally:
-        if os.path.exists(temp_script_path):
-            try: os.unlink(temp_script_path)
-            except OSError as unlink_e:
-                 cleanup_log_ctx = {k: v for k, v in log_context.items() if k in ['old_id', 'new_id', 'corpus_prefix']}
-                 if logger: logger.log_operation(**cleanup_log_ctx, source_file=temp_script_path, destination_file="", operation_type="cleanup", file_type="temp_script", status="failed", details=f"Could not remove temp script: {unlink_e}")
+    except Exception as e:
+        error_details = f"Unexpected error running worker {Path(worker_script_path).name}: {type(e).__name__}: {e}"
+        script_logger.error(error_details, exc_info=True) # Log full traceback for unexpected errors
+        if logger:
+            clean_ctx = dict(log_context); clean_ctx.pop("file_type", None)
+            logger.log_operation(**clean_ctx, operation_type=log_op_type, file_type=log_file_type, status="failed", details=error_details)
+        success = False
 
+    # Log final success status
     if success and logger:
-        if not (stderr_output and not any(warning in stderr_output for warning in noisy_warnings) and not stderr_output.startswith("DEBUG")):
+        if not (stderr_output and not any(warning in stderr_output for warning in noisy_warnings)):
              clean_ctx = dict(log_context); clean_ctx.pop("file_type", None)
-             logger.log_operation(**clean_ctx, operation_type=log_op_type_for_run, file_type=log_file_type_for_run, status="success")
-    return success
+             logger.log_operation(**clean_ctx, operation_type=log_op_type, file_type=log_file_type, status="success")
 
+    return success
 
 # --- FileOperationLogger ---
 class FileOperationLogger:
@@ -262,301 +293,9 @@ class FileOperationLogger:
         else: self.logger.info("WandB logging was disabled or run ended prematurely.")
         self.logger.info("Logger summarized and closed."); return summary
 
+# --- REMOVED Extraction Functions that generated scripts ---
 
-# --- Extraction Functions ---
-@timed_operation("extract_main_outputs")
-def extract_main_model_outputs(
-    conda_env: str, docbin_path: str, output_txt_joined: str, output_txt_fullstop: str,
-    output_csv_lemma: str, output_csv_upos: str, output_csv_stop: str, output_csv_dot: str,
-    output_conllu: str, ner_tags_path: Optional[str], doc_id_str: str,
-    logger: Optional[FileOperationLogger] = None, **log_ctx
-) -> bool:
-    """Loads main model once and extracts all related outputs via one temp script, attempting NER alignment."""
-    # (Path setup and escaping remains the same)
-    docbin_path_abs = os.path.abspath(docbin_path); output_txt_joined_abs = os.path.abspath(output_txt_joined); output_txt_fullstop_abs = os.path.abspath(output_txt_fullstop)
-    output_csv_lemma_abs = os.path.abspath(output_csv_lemma); output_csv_upos_abs = os.path.abspath(output_csv_upos); output_csv_stop_abs = os.path.abspath(output_csv_stop)
-    output_csv_dot_abs = os.path.abspath(output_csv_dot); output_conllu_abs = os.path.abspath(output_conllu)
-    ner_tags_path_abs = os.path.abspath(ner_tags_path) if ner_tags_path else None
-    docbin_path_esc = docbin_path_abs.replace('\\', '\\\\'); output_txt_joined_esc = output_txt_joined_abs.replace('\\', '\\\\'); output_txt_fullstop_esc = output_txt_fullstop_abs.replace('\\', '\\\\')
-    output_csv_lemma_esc = output_csv_lemma_abs.replace('\\', '\\\\'); output_csv_upos_esc = output_csv_upos_abs.replace('\\', '\\\\'); output_csv_stop_esc = output_csv_stop_abs.replace('\\', '\\\\')
-    output_csv_dot_esc = output_csv_dot_abs.replace('\\', '\\\\'); output_conllu_esc = output_conllu_abs.replace('\\', '\\\\')
-    ner_tags_path_repr = repr(ner_tags_path_abs.replace('\\', '\\\\')) if ner_tags_path_abs else 'None'
-    regex_pattern1_raw = r'\\.(?!\\.)'; regex_replace1_raw = r'.\n'; regex_pattern2_raw = r'\s+\n'; regex_replace2_raw = r'\n'; regex_pattern3_raw = r'\n\s+'; regex_replace3_raw = r'\n'
-    def escape_for_script_string(s: str) -> str: return s.replace('\\', '\\\\').replace('\n', '\\n').replace("'", "\\'").replace('"','\\"')
-    regex_p1_script_literal = escape_for_script_string(regex_pattern1_raw); regex_r1_script_literal = escape_for_script_string(regex_replace1_raw)
-    regex_p2_script_literal = escape_for_script_string(regex_pattern2_raw); regex_r2_script_literal = escape_for_script_string(regex_replace2_raw)
-    regex_p3_script_literal = escape_for_script_string(regex_pattern3_raw); regex_r3_script_literal = escape_for_script_string(regex_replace3_raw)
-
-    # Construct the script content with simplified inner formatting for logging
-    script_content = f"""# -*- coding: utf-8 -*-
-import sys, csv, spacy, os, traceback, re, json
-from difflib import SequenceMatcher
-from spacy.tokens import DocBin
-import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] TempScript: %(message)s', stream=sys.stderr)
-
-docbin_path=r'{docbin_path_esc}'; output_txt_joined=r'{output_txt_joined_esc}'; output_txt_fullstop=r'{output_txt_fullstop_esc}'
-output_csv_lemma=r'{output_csv_lemma_esc}'; output_csv_upos=r'{output_csv_upos_esc}'; output_csv_stop=r'{output_csv_stop_esc}'
-output_csv_dot=r'{output_csv_dot_esc}'; output_conllu=r'{output_conllu_esc}'; ner_tags_path={ner_tags_path_repr}; doc_id_str='{doc_id_str}'
-
-logging.info("Starting extraction for doc ID: %s" % doc_id_str)
-
-# --- Alignment Function ---
-def attempt_ner_alignment(tokens, ner_tags):
-    logging.info("Entering attempt_ner_alignment. len(tokens)=%d, len(ner_tags)=%d" % (len(tokens), len(ner_tags)))
-    token_texts = [str(t.text) for t in tokens]
-    # logging.debug("Token texts (first 10): %s..." % (token_texts[:10],)) # Avoid complex slicing in debug log
-    matcher = SequenceMatcher(None, token_texts, ner_tags, autojunk=False)
-    aligned_tags = [None] * len(tokens); mismatch_details = []
-    alignment_stats = {{'status': 'failed_no_matches', 'aligned_count': 0, 'total_tokens': len(tokens), 'total_ner_tags': len(ner_tags), 'success_rate': 0.0, 'details': mismatch_details}}
-    blocks_processed = 0
-    for block in matcher.get_matching_blocks():
-        if block.size == 0: continue
-        blocks_processed += 1
-        token_start, ner_start, size = block.a, block.b, block.size
-        logging.debug("Match block: token_idx=%d, ner_idx=%d, size=%d" % (token_start, ner_start, size))
-        for i in range(size):
-            token_idx = token_start + i; ner_idx = ner_start + i
-            if token_idx < len(aligned_tags) and ner_idx < len(ner_tags):
-                 aligned_tags[token_idx] = ner_tags[ner_idx]; alignment_stats['aligned_count'] += 1
-                 if len(mismatch_details) < 20:
-                     token_text_safe = token_texts[token_idx] if token_idx < len(token_texts) else "TOKEN_OOB"
-                     ner_tag_safe = ner_tags[ner_idx]
-                     # Use simple .format() here - no f-string
-                     mismatch_details.append("Align: tok[{0}]='{1}' <-> tag[{2}]='{3}'".format(token_idx, token_text_safe, ner_idx, ner_tag_safe))
-            else:
-                 logging.warning("Alignment index out of bounds: token_idx=%d (max=%d), ner_idx=%d (max=%d)" % (token_idx, len(aligned_tags)-1, ner_idx, len(ner_tags)-1))
-
-    logging.info("Alignment processed %d matching blocks. Total aligned: %d" % (blocks_processed, alignment_stats['aligned_count']))
-    if alignment_stats['aligned_count'] > 0:
-         alignment_stats['success_rate'] = alignment_stats['aligned_count'] / len(tokens) if len(tokens) > 0 else 0
-         alignment_stats['status'] = 'success' if alignment_stats['aligned_count'] == len(tokens) else 'partial'
-         if alignment_stats['status'] == 'partial':
-             unaligned_tokens = len(tokens) - alignment_stats['aligned_count']
-             logging.info("%d tokens could not be aligned." % unaligned_tokens)
-
-    success_threshold = 0.5 # Define locally
-    if alignment_stats['success_rate'] < success_threshold and alignment_stats['status'] != 'success':
-        # Use simpler formatting for the warning
-        logging.warning("Alignment quality low ({:.1%}) < {:.0f}%). Discarding alignment results.".format(alignment_stats['success_rate'], success_threshold * 100))
-        alignment_stats['status'] = 'failed_low_quality'
-        mismatch_details.append("Failed: Alignment rate below threshold ({:.1%})".format(success_threshold))
-        return None, alignment_stats
-    logging.info("Alignment Result: Status={status}, Rate={rate:.2%} (Aligned={aligned}/{total})".format(status=alignment_stats['status'], rate=alignment_stats['success_rate'], aligned=alignment_stats['aligned_count'], total=len(tokens)))
-    return aligned_tags, alignment_stats
-# --- End Alignment Function ---
-
-dirs_to_check=set([os.path.dirname(p) for p in [output_txt_joined,output_txt_fullstop,output_csv_lemma,output_csv_upos,output_csv_stop,output_csv_dot,output_conllu] if p])
-for d in dirs_to_check:
-    if d:
-        try: os.makedirs(d, exist_ok=True); logging.info("Ensured directory exists: %s" % d)
-        except OSError as e: logging.error("Failed to create directory %s: %s" % (d, e)); sys.exit(1)
-
-try:
-    logging.info("Loading spaCy model 'grc_proiel_trf'...")
-    nlp = spacy.load('grc_proiel_trf');
-    logging.info("Loading DocBin from %s..." % docbin_path)
-    doc_bin = DocBin().from_disk(docbin_path); docs = list(doc_bin.get_docs(nlp.vocab));
-    if not docs: logging.error("DocBin file is empty or failed to load: %s" % docbin_path); sys.exit(1)
-    doc = docs[0]; num_tokens = len(doc)
-    logging.info("Successfully loaded doc with %d tokens." % num_tokens)
-
-    doc_text = doc.text
-    logging.info("Writing joined text to %s..." % output_txt_joined)
-    with open(output_txt_joined,'w',encoding='utf-8') as f: f.write(doc_text)
-
-    logging.info("Processing and writing fullstop text to %s..." % output_txt_fullstop)
-    try:
-        pat1 = r'{regex_p1_script_literal}'; rep1 = r'{regex_r1_script_literal}'
-        pat2 = r'{regex_p2_script_literal}'; rep2 = r'{regex_r2_script_literal}'
-        pat3 = r'{regex_p3_script_literal}'; rep3 = r'{regex_r3_script_literal}'
-        tfs = re.sub(pat1, rep1, doc_text); tfs = re.sub(pat2, rep2, tfs); tfs = re.sub(pat3, rep3, tfs).strip()
-        with open(output_txt_fullstop,'w',encoding='utf-8') as f: f.write(tfs)
-    except Exception as fs_e: logging.warning("Failed to generate fullstop format: %s" % fs_e, exc_info=True)
-
-    logging.info("Writing CSV annotation files...")
-    try:
-        with open(output_csv_lemma,'w',encoding='utf-8',newline='') as fl, \\
-             open(output_csv_upos,'w',encoding='utf-8',newline='') as fu, \\
-             open(output_csv_stop,'w',encoding='utf-8',newline='') as fs, \\
-             open(output_csv_dot,'w',encoding='utf-8',newline='') as fd:
-            wl=csv.writer(fl,quoting=csv.QUOTE_ALL); wl.writerow(['ID','TOKEN','LEMMA']);
-            wu=csv.writer(fu,quoting=csv.QUOTE_ALL); wu.writerow(['ID','TOKEN','UPOS']);
-            ws=csv.writer(fs,quoting=csv.QUOTE_ALL); ws.writerow(['ID','TOKEN','IS_STOP']);
-            wd=csv.writer(fd,quoting=csv.QUOTE_ALL); wd.writerow(['ID','TOKEN','IS_PUNCT'])
-            for i,t in enumerate(doc):
-                tid,ttxt=i+1,str(t.text);
-                wl.writerow([tid,ttxt,t.lemma_]); wu.writerow([tid,ttxt,t.pos_]);
-                ws.writerow([tid,ttxt,'TRUE' if t.is_stop else 'FALSE']); wd.writerow([tid,ttxt,'TRUE' if t.is_punct else 'FALSE'])
-        logging.info("Finished writing CSV files.")
-    except Exception as csv_e: logging.error("Failed during CSV writing: %s" % csv_e, exc_info=True); sys.exit(1)
-
-    original_ner_tags = None; ner_tags_to_use = None; alignment_info = None; mismatch_detected = False
-    mismatch_data_for_json = {{}}
-    logging.info("Checking for NER tags at: %s" % ner_tags_path)
-    if ner_tags_path and os.path.exists(ner_tags_path):
-        try:
-            logging.info("Reading NER tags from %s..." % ner_tags_path)
-            with open(ner_tags_path,'r',encoding='utf-8') as fn: original_ner_tags=[ln.strip() for ln in fn if ln.strip()]
-            num_ner_tags = len(original_ner_tags); logging.info("Read %d NER tags." % num_ner_tags)
-            mismatch_data_for_json = {{"document_id": doc_id_str,"main_model_tokens": num_tokens,"ner_model_tags": num_ner_tags,"mismatch_detected": False,"alignment_info": None}}
-            if num_ner_tags != num_tokens:
-                mismatch_detected = True; mismatch_data_for_json["mismatch_detected"] = True
-                logging.warning("Token count mismatch! Main model: %d, NER tags: %d. Attempting alignment." % (num_tokens, num_ner_tags))
-                aligned_result, alignment_info = attempt_ner_alignment(doc, original_ner_tags)
-                mismatch_data_for_json["alignment_info"] = alignment_info
-                if aligned_result: ner_tags_to_use = aligned_result; logging.info("Using ALIGNED NER tags for CoNLL-U.")
-                else: ner_tags_to_use = None; logging.warning("Alignment failed or discarded. NER tags will be OMITTED from CoNLL-U.")
-            else:
-                ner_tags_to_use = original_ner_tags; logging.info("Token counts match. Using original NER tags."); mismatch_data_for_json = None
-        except Exception as e:
-            logging.warning("Failed to read or align NER tags: %s" % e, exc_info=True); ner_tags_to_use=None
-            mismatch_data_for_json["error_during_ner_processing"] = str(e)
-    elif ner_tags_path:
-        logging.warning("NER tags path provided but not found: %s" % ner_tags_path)
-        mismatch_data_for_json = {{ "document_id": doc_id_str, "error_message": "NER tags path not found", "path_checked": ner_tags_path }}
-    else:
-        logging.info("No NER tags path provided. Skipping NER integration."); mismatch_data_for_json = None
-
-    logging.info("Writing CoNLL-U file to %s..." % output_conllu)
-    try:
-        with open(output_conllu,"w",encoding="utf-8") as fo:
-            fo.write("# newdoc id = %s\\n" % doc_id_str)
-            if mismatch_detected:
-                fo.write("# ner_token_mismatch = True\\n"); fo.write("# main_model_tokens = %d\\n" % num_tokens); fo.write("# ner_model_tags = %d\\n" % num_ner_tags)
-                if alignment_info:
-                    fo.write("# ner_alignment_status = %s\\n" % alignment_info.get('status','?')); fo.write("# ner_alignment_rate = %.4f\\n" % alignment_info.get('success_rate', 0.0))
-                    if alignment_info.get('status') in ('partial', 'failed_low_quality') and alignment_info.get('details'):
-                         details_preview = "; ".join(alignment_info['details'][:3]); fo.write("# ner_alignment_details_preview = %s\\n" % details_preview)
-            sidc = 1
-            for sent_idx, sent in enumerate(doc.sents):
-                stc=str(sent.text).replace('\\n',' ').replace('\\r','').strip()
-                fo.write("\\n# sent_id = %s-%d\\n" % (doc_id_str, sidc)); fo.write("# text = %s\\n" % stc)
-                tsic = 1
-                for token_idx_in_doc, t in enumerate(sent):
-                    head_idx_in_doc = t.head.i; head_idx_in_sent = head_idx_in_doc - sent.start + 1 if head_idx_in_doc != t.i else 0
-                    fts = str(t.morph) if t.morph else "_"
-                    mp = []
-                    if ner_tags_to_use:
-                        abs_token_index = t.i
-                        if abs_token_index < len(ner_tags_to_use):
-                            nt = ner_tags_to_use[abs_token_index];
-                            if nt and nt != 'O': mp.append("NER=%s" % nt)
-                        else: logging.warning("Token index %d out of bounds for ner_tags_to_use (len=%d) in sentence %d" % (abs_token_index, len(ner_tags_to_use), sidc))
-                    if (t.i + 1) < len(doc) and doc[t.i + 1].idx == (t.idx + len(t.text)): mp.append("SpaceAfter=No")
-                    mf = "|".join(mp) if mp else "_"; dpr = str(t.dep_).strip() if t.dep_ else "dep";
-                    if not dpr: dpr = "dep"; dpf = "_"
-                    cols = [str(tsic),str(t.text),str(t.lemma_),str(t.pos_),str(t.tag_),fts,str(head_idx_in_sent),dpr,dpf,mf]
-                    fo.write("\\t".join(cols) + "\\n"); tsic += 1
-                sidc += 1
-        logging.info("Finished writing CoNLL-U file.")
-    except Exception as conllu_e: logging.error("Failed during CoNLL-U writing: %s" % conllu_e, exc_info=True); sys.exit(1)
-
-    if mismatch_detected and mismatch_data_for_json:
-        mismatch_info_file_path = os.path.join(os.path.dirname(output_conllu), "%s_ner_mismatch_info.json" % doc_id_str)
-        mismatch_info_file_path_esc = mismatch_info_file_path.replace('\\\\', '\\\\\\\\')
-        logging.info("Writing mismatch info to %s..." % mismatch_info_file_path_esc)
-        try:
-            with open(mismatch_info_file_path, 'w', encoding='utf-8') as fm: json.dump(mismatch_data_for_json, fm, indent=2)
-            logging.info("Finished writing mismatch info.")
-        except Exception as e: logging.error("Failed to write mismatch info file: %s" % e, exc_info=True)
-    elif mismatch_data_for_json and "error_message" in mismatch_data_for_json:
-         mismatch_info_file_path = os.path.join(os.path.dirname(output_conllu), "%s_ner_error_info.json" % doc_id_str)
-         mismatch_info_file_path_esc = mismatch_info_file_path.replace('\\\\', '\\\\\\\\')
-         logging.warning("Writing NER processing error info to %s..." % mismatch_info_file_path_esc)
-         try:
-             with open(mismatch_info_file_path, 'w', encoding='utf-8') as fm: json.dump(mismatch_data_for_json, fm, indent=2)
-         except Exception as e: logging.error("Failed to write NER error info file: %s" % e, exc_info=True)
-
-except Exception as e:
-    logging.error("Unhandled exception in temporary script: %s" % e, exc_info=True)
-    sys.exit(1)
-
-logging.info("Extraction script finished successfully for doc ID: %s." % doc_id_str)
-sys.exit(0)
-"""
-    # Call the conda run function
-    run_log_ctx = log_ctx.copy()
-    run_log_ctx.update({
-        'source_file': docbin_path,
-        'destination_file': f"Multiple files in {os.path.dirname(output_txt_joined_abs)}",
-        'file_type': 'main-model-outputs'
-    })
-    return run_python_script_in_conda_env(conda_env, script_content, run_log_ctx, logger, timeout=1200)
-
-
-# (Keep extract_ner_model_outputs as is)
-@timed_operation("extract_ner_outputs")
-def extract_ner_model_outputs(
-    conda_env: str, docbin_path: str, output_csv_ner: str, output_ner_tags: str,
-    logger: Optional[FileOperationLogger] = None, **log_ctx # Pass full context
-) -> bool:
-    """Loads NER model once and extracts NER CSV and NER tags file via one temp script."""
-    ner_model_name = 'grc_ner_trf'
-    docbin_path_abs = os.path.abspath(docbin_path); output_csv_ner_abs = os.path.abspath(output_csv_ner); output_ner_tags_abs = os.path.abspath(output_ner_tags)
-    docbin_path_esc = docbin_path_abs.replace('\\', '\\\\'); output_csv_ner_esc = output_csv_ner_abs.replace('\\', '\\\\'); output_ner_tags_esc = output_ner_tags_abs.replace('\\', '\\\\')
-    old_id_str = log_ctx.get('old_id', '?'); new_id_str = log_ctx.get('new_id', '?')
-    ner_summary_file_path = os.path.join(os.path.dirname(output_csv_ner_abs), f"{new_id_str}_ner_stats.json"); ner_summary_file_path_esc = ner_summary_file_path.replace('\\', '\\\\')
-
-    script_content = f"""# -*- coding: utf-8 -*-
-import sys, csv, spacy, os, traceback, json
-from spacy.tokens import DocBin
-import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] TempScript-NER: %(message)s', stream=sys.stderr)
-
-docbin_path=r'{docbin_path_esc}'; output_csv_ner=r'{output_csv_ner_esc}'; output_ner_tags=r'{output_ner_tags_esc}';
-ner_model_name='{ner_model_name}'; ner_summary_file=r'{ner_summary_file_path_esc}';
-old_id_str='{old_id_str}'; new_id_str='{new_id_str}'
-
-logging.info("Starting NER extraction for Doc ID: %s -> %s" % (old_id_str, new_id_str)) # Use % formatting
-dirs_to_check=set([os.path.dirname(p) for p in [output_csv_ner, output_ner_tags, ner_summary_file] if p])
-for d in dirs_to_check:
-    if d:
-        try: os.makedirs(d, exist_ok=True); logging.info("Ensured directory exists: %s" % d) # Use % formatting
-        except OSError as e: logging.error("Failed create dir %s: %s" % (d, e)); sys.exit(1) # Use % formatting
-try:
-    logging.info("Loading NER model '%s'..." % ner_model_name) # Use % formatting
-    nlp = spacy.load(ner_model_name)
-    logging.info("Loading DocBin from %s..." % docbin_path) # Use % formatting
-    doc_bin = DocBin().from_disk(docbin_path); docs = list(doc_bin.get_docs(nlp.vocab))
-    if not docs: logging.error("NER DocBin is empty or failed load: %s" % docbin_path); sys.exit(1) # Use % formatting
-    doc = docs[0]; num_tokens = len(doc)
-    logging.info("Loaded doc with %d tokens. Found %d entities." % (num_tokens, len(doc.ents))) # Use % formatting
-    ner_stats={{'total_tokens': num_tokens, 'ner_tokens': 0, 'o_tokens': 0}}; tags_list = []
-    logging.info("Writing NER CSV to %s and tags to %s..." % (output_csv_ner, output_ner_tags)) # Use % formatting
-    try:
-        with open(output_csv_ner,'w',encoding='utf-8',newline='') as fner, \\
-             open(output_ner_tags,'w',encoding='utf-8') as ftags:
-            wn = csv.writer(fner, quoting=csv.QUOTE_ALL); wn.writerow(['ID','TOKEN','NER'])
-            for i, t in enumerate(doc):
-                tid = i + 1; ttxt = str(t.text)
-                nt = t.ent_type_ if t.ent_type_ else 'O'
-                if nt != 'O': ner_stats['ner_tokens'] += 1
-                else: ner_stats['o_tokens'] += 1
-                wn.writerow([tid, ttxt, nt]); tags_list.append(nt)
-            ftags.write('\\n'.join(tags_list))
-        logging.info("Finished writing NER CSV and tags file. NER tokens: %d, O tokens: %d." % (ner_stats['ner_tokens'], ner_stats['o_tokens'])) # Use % formatting
-    except Exception as csv_e: logging.error("Failed during NER CSV/Tags writing: %s" % csv_e, exc_info=True); sys.exit(1) # Use % formatting
-    logging.info("Writing NER stats summary to %s..." % ner_summary_file) # Use % formatting
-    try:
-        ner_percentage = (ner_stats['ner_tokens'] / num_tokens * 100) if num_tokens > 0 else 0
-        summary_data = {{"doc_id_original": old_id_str, "doc_id_new": new_id_str, "docbin_path": docbin_path, "ner_model_used": ner_model_name, "total_tokens": ner_stats['total_tokens'], "tokens_with_ner": ner_stats['ner_tokens'], "tokens_without_ner": ner_stats['o_tokens'], "ner_percentage": round(ner_percentage, 2)}}
-        with open(ner_summary_file,'w',encoding='utf-8') as fsum: json.dump(summary_data, fsum, indent=2)
-        logging.info("Finished writing NER stats summary.")
-    except Exception as e: logging.warning("Failed write NER summary file: %s" % e, exc_info=True) # Use % formatting
-except Exception as e: logging.error("Unhandled exception in NER temporary script: %s" % e, exc_info=True); sys.exit(1) # Use % formatting
-logging.info("NER extraction script finished successfully for Doc ID: %s -> %s." % (old_id_str, new_id_str)) # Use % formatting
-sys.exit(0)
-"""
-    run_log_ctx = log_ctx.copy()
-    run_log_ctx.update({
-        'source_file': docbin_path,
-        'destination_file': f"{os.path.basename(output_csv_ner)} & {os.path.basename(output_ner_tags)}",
-        'file_type': 'ner-model-outputs'
-    })
-    return run_python_script_in_conda_env(conda_env, script_content, run_log_ctx, logger, timeout=600)
-
-# (Keep summarize_token_mismatches as is)
+# --- Function to summarize mismatches ---
 @timed_operation("summarize_mismatches")
 def summarize_token_mismatches(output_base_dir: str, logger: Optional[FileOperationLogger] = None):
     base_path = Path(output_base_dir); info_files = list(base_path.glob("**/*_ner_mismatch_info.json"))
@@ -598,7 +337,7 @@ def summarize_token_mismatches(output_base_dir: str, logger: Optional[FileOperat
         if logger: logger.log_operation(**log_ctx_summary, status='failed', details=f"Error: {e}")
     return summary
 
-# (Keep Helper Functions as is)
+# --- Helper Functions ---
 def validate_input_file(file_path: str, file_type: str) -> bool:
     if not file_path: script_logger.error(f"Input {file_type} path is empty."); return False
     abs_path = os.path.abspath(file_path)
@@ -696,39 +435,47 @@ def get_expected_output_paths(output_base_dir: str, corpus_prefix: str, new_id: 
         "output_csv_lemma": os.path.join(annotations_dir, f"{new_id}-lemma.csv"),"output_csv_upos": os.path.join(annotations_dir, f"{new_id}-upos.csv"),
         "output_csv_stop": os.path.join(annotations_dir, f"{new_id}-stop.csv"),"output_csv_dot": os.path.join(annotations_dir, f"{new_id}-dot.csv"),
         "output_csv_ner": os.path.join(annotations_dir, f"{new_id}-ner.csv"),"output_conllu": os.path.join(annotations_dir, f"{new_id}-conllu.conllu"),
-        "temp_ner_tags_file": os.path.join(annotations_dir, f".{new_id}_temp_ner_tags.txt"),"source_original_txt": os.path.join(texts_dir, f"{new_id}-original.txt"),
-        "ner_mismatch_info": os.path.join(annotations_dir, f"{new_id}_ner_mismatch_info.json"),"ner_stats_file": os.path.join(annotations_dir, f"{new_id}_ner_stats.json"),
+        "output_ner_tags": os.path.join(annotations_dir, f"{new_id}-ner_tags.txt"), # Consistent path for NER tags
+        "source_original_txt": os.path.join(texts_dir, f"{new_id}-original.txt"),
+        "ner_mismatch_info": os.path.join(annotations_dir, f"{new_id}_ner_mismatch_info.json"),
+        "ner_stats_file": os.path.join(annotations_dir, f"{new_id}_ner_stats.json"),
         "ner_error_info": os.path.join(annotations_dir, f"{new_id}_ner_error_info.json"),
     }
 
-# (Keep process_document as the No Locking Version)
+# --- Main Processing Logic (Refactored for Worker Scripts) ---
 @timed_operation("process_document")
 def process_document(
     old_id: str, new_id: str, base_dir: str, output_base_dir: str,
     main_index: Dict[str, str], ner_index: Dict[str, str],
     main_env: str, ner_env: str, logger: Optional[FileOperationLogger] = None,
-    overwrite: bool = False, use_locking: bool = False, # use_locking is now ignored
+    overwrite: bool = False, use_locking: bool = False, # use_locking is ignored
     log_context: Dict = None
 ) -> Tuple[bool, str]:
-    """Processes a single document based on pre-check results. File locking removed."""
-    overall_success = True; final_status_msg = "Success"; temp_files_to_clean = []
+    """Processes a single document using external worker scripts."""
+    overall_success = True; final_status_msg = "Success"
     corpus_prefix_match = re.match(r'^([a-zA-Z0-9\-_]+?)_', old_id)
     corpus_prefix = corpus_prefix_match.group(1) if corpus_prefix_match else "unknown_corpus"
+
     current_log_context = {'old_id': old_id, 'new_id': new_id, 'corpus_prefix': corpus_prefix}
     if log_context:
         for key, value in log_context.items():
             if key not in current_log_context: current_log_context[key] = value
+
     if logger: logger.log_operation(**current_log_context, operation_type="process_start", file_type="document", status="info", details=f"Processing (O={overwrite}, L=False)")
+
+    # --- Path Setup ---
     main_docbin_path = main_index.get(old_id)
     if not main_docbin_path or not os.path.isfile(main_docbin_path):
          if logger: logger.log_operation(**current_log_context, operation_type="lookup", file_type="main_docbin", status="failed", details="Main docbin path invalid/not found during processing step!")
          return False, "Failed: Main DocBin vanished post-check"
+
     ner_docbin_path = ner_index.get(old_id)
     ner_docbin_path_resolved = None
     if ner_docbin_path and os.path.isfile(ner_docbin_path): ner_docbin_path_resolved = ner_docbin_path
     elif ner_docbin_path:
         if logger: logger.log_operation(**current_log_context, operation_type="lookup", file_type="ner_docbin", status="warning", details="NER index path invalid/not found during processing step.")
     else: script_logger.debug(f"[{old_id}->{new_id}] No NER docbin path found in index.")
+
     source_txt_path = find_original_text(old_id, base_dir)
     paths = get_expected_output_paths(output_base_dir, corpus_prefix, new_id)
     texts_dir = paths["texts_dir"]; annotations_dir = paths["annotations_dir"]
@@ -736,53 +483,115 @@ def process_document(
     output_csv_lemma=paths["output_csv_lemma"]; output_csv_upos=paths["output_csv_upos"]
     output_csv_stop=paths["output_csv_stop"]; output_csv_dot=paths["output_csv_dot"]
     output_csv_ner=paths["output_csv_ner"]; output_conllu=paths["output_conllu"]
-    temp_ner_tags_file=Path(paths["temp_ner_tags_file"]); temp_files_to_clean.append(str(temp_ner_tags_file))
+    # Define the stable path for the NER tags file
+    output_ner_tags_file = paths["output_ner_tags"] # Get path from helper
+    ner_stats_file = paths["ner_stats_file"]
     dest_original_txt = paths["source_original_txt"]
+
+    # --- Directory Creation ---
     try:
         os.makedirs(annotations_dir, exist_ok=True); script_logger.debug(f"[{old_id}->{new_id}] Ensured annotations directory exists: {annotations_dir}")
         os.makedirs(texts_dir, exist_ok=True); script_logger.debug(f"[{old_id}->{new_id}] Ensured texts directory exists: {texts_dir}")
     except OSError as e:
          if logger: logger.log_operation(**current_log_context, operation_type="create_dir", file_type="directory", status="failed", details=f"Dir creation error for {texts_dir} or {annotations_dir}: {e}")
          return False, f"Failed: Dir creation error {e}"
+
+    # --- Define Worker Script Paths (relative to this script's location) ---
+    script_dir = Path(__file__).parent.resolve()
+    ner_worker_script = script_dir / "_extract_ner_worker.py"
+    main_worker_script = script_dir / "_extract_main_worker.py"
+
     try:
-        ner_tags_available = False
+        # --- Step 1: Run NER Worker Script (if input exists) ---
+        ner_step_success = True # Assume success if not run
         if ner_docbin_path_resolved:
-            script_logger.info(f"[{old_id}->{new_id}] Extracting NER outputs...")
-            if extract_ner_model_outputs(ner_env, ner_docbin_path_resolved, output_csv_ner, str(temp_ner_tags_file), logger, **current_log_context): ner_tags_available = True
-            else: overall_success = False; final_status_msg = "Failed: NER extraction"
+            script_logger.info(f"[{old_id}->{new_id}] Running NER Worker Script...")
+            ner_args = {
+                "--docbin-path": ner_docbin_path_resolved,
+                "--output-csv-ner": output_csv_ner,
+                "--output-ner-tags": output_ner_tags_file, # Use stable path
+                "--output-stats-json": ner_stats_file,
+                "--ner-model-name": 'grc_ner_trf', # Consider making this configurable if needed
+                "--old-id": old_id,
+                "--new-id": new_id
+            }
+            ner_step_success = run_worker_script_in_conda_env(
+                conda_env=ner_env,
+                worker_script_path=str(ner_worker_script),
+                script_args=ner_args,
+                log_context=current_log_context, # Pass context
+                logger=logger,
+                timeout=600 # NER model might take time
+            )
+            if not ner_step_success:
+                overall_success = False
+                final_status_msg = "Failed: NER worker script execution"
         else:
-             if logger: logger.log_operation(**current_log_context, operation_type="extract", file_type="ner-model-outputs", status="skipped", details="NER docbin not resolved or found during processing step.")
+             if logger: logger.log_operation(**current_log_context, operation_type="extract", file_type="ner-model-outputs", status="skipped", details="NER docbin not resolved or found.")
+
+        # --- Step 2: Run Main Worker Script (only if NER step succeeded or was skipped) ---
         if overall_success:
-            ner_tags_input_path = None
-            if temp_ner_tags_file.is_file(): ner_tags_input_path = str(temp_ner_tags_file)
-            elif ner_tags_available:
-                 if logger: logger.log_operation(**current_log_context, operation_type="read", file_type="temp_ner_tags", status="warning", details="NER extraction reported success but temp tags file not found before main extraction.")
-            script_logger.info(f"[{old_id}->{new_id}] Extracting Main Model outputs (using NER tags: {ner_tags_input_path is not None})...")
-            if not extract_main_model_outputs( main_env, main_docbin_path, output_txt_joined, output_txt_fullstop, output_csv_lemma, output_csv_upos, output_csv_stop, output_csv_dot, output_conllu, ner_tags_input_path, new_id, logger, **current_log_context):
-                overall_success = False; final_status_msg = "Failed: Main model extraction"
-        if source_txt_path:
-            if overwrite or not os.path.exists(dest_original_txt):
-                 try:
-                     shutil.copy2(source_txt_path, dest_original_txt)
-                     if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", source_file=source_txt_path, destination_file=dest_original_txt, status="success")
-                 except Exception as e:
-                     if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", source_file=source_txt_path, destination_file=dest_original_txt, status="failed", details=str(e))
+            script_logger.info(f"[{old_id}->{new_id}] Running Main Worker Script...")
+            main_args = {
+                "--docbin-path": main_docbin_path, # Main uses the main docbin
+                "--output-txt-joined": output_txt_joined,
+                "--output-txt-fullstop": output_txt_fullstop,
+                "--output-csv-lemma": output_csv_lemma,
+                "--output-csv-upos": output_csv_upos,
+                "--output-csv-stop": output_csv_stop,
+                "--output-csv-dot": output_csv_dot,
+                "--output-conllu": output_conllu,
+                "--doc-id": new_id,
+                "--main-model-name": 'grc_proiel_trf' # Consider making configurable
+            }
+            # Only pass ner-tags-path if the file is expected to exist
+            # Check if NER ran successfully OR if the tags file exists from a previous run (and not overwriting)
+            if ner_step_success and os.path.exists(output_ner_tags_file):
+                 main_args["--ner-tags-path"] = output_ner_tags_file
+            elif not ner_step_success and ner_docbin_path_resolved:
+                 script_logger.warning(f"[{old_id}->{new_id}] NER step failed, main worker will run without NER tags path.")
+            elif os.path.exists(output_ner_tags_file) and not overwrite:
+                 script_logger.info(f"[{old_id}->{new_id}] NER step skipped, but found existing NER tags file. Using it for main worker.")
+                 main_args["--ner-tags-path"] = output_ner_tags_file
+
+
+            main_step_success = run_worker_script_in_conda_env(
+                conda_env=main_env,
+                worker_script_path=str(main_worker_script),
+                script_args=main_args,
+                log_context=current_log_context, # Pass context
+                logger=logger,
+                timeout=1200 # Main model might take longer
+            )
+            if not main_step_success:
+                overall_success = False
+                final_status_msg = "Failed: Main worker script execution"
+
+        # --- Step 3: Copy Original Text ---
+        if overall_success: # Only copy if main steps seemed okay
+            if source_txt_path:
+                if overwrite or not os.path.exists(dest_original_txt):
+                    try:
+                        shutil.copy2(source_txt_path, dest_original_txt)
+                        if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", source_file=source_txt_path, destination_file=dest_original_txt, status="success")
+                    except Exception as e:
+                        if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", source_file=source_txt_path, destination_file=dest_original_txt, status="failed", details=str(e))
+                        # Decide if copy failure should fail the whole document processing
+                        # overall_success = False
+                        # final_status_msg = "Failed: Source text copy error"
+                else:
+                     if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", status="skipped", details="Destination original text exists (overwrite=False)")
             else:
-                  if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", status="skipped", details="Destination original text exists (overwrite=False)")
-        else:
-            if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", status="skipped", details="Source original text file not found.")
+                if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", status="skipped", details="Source original text file not found.")
+
     except Exception as e:
-         script_logger.error(f"!!! Unexpected Error during processing for doc {old_id}->{new_id}: {type(e).__name__}: {e}", exc_info=True)
-         if logger: logger.log_operation(**current_log_context, operation_type="processing", file_type="document", status="failed", details=f"Unexpected Error: {type(e).__name__}: {e}")
-         overall_success = False; final_status_msg = f"Failed: Unexpected Error ({type(e).__name__})"
-    finally:
-        script_logger.debug(f"[{old_id}->{new_id}] Cleaning up temporary files...")
-        for temp_file_path_str in temp_files_to_clean:
-            temp_file_p = Path(temp_file_path_str)
-            if temp_file_p.exists():
-                try: temp_file_p.unlink(); script_logger.debug(f"[{old_id}->{new_id}] Removed temp file: {temp_file_p.name}")
-                except OSError as e:
-                    if logger: logger.log_operation(**current_log_context, operation_type="cleanup", file_type="temp_file", status="failed", details=f"Error removing {temp_file_p.name}: {e}")
+         # Catch any unexpected errors during this orchestration phase
+         script_logger.error(f"!!! Unexpected Error during processing orchestration for doc {old_id}->{new_id}: {type(e).__name__}: {e}", exc_info=True)
+         if logger: logger.log_operation(**current_log_context, operation_type="processing", file_type="document", status="failed", details=f"Unexpected Orchestration Error: {type(e).__name__}: {e}")
+         overall_success = False; final_status_msg = f"Failed: Unexpected Orchestration Error ({type(e).__name__})"
+
+    # No finally block needed here as cleanup is handled by run_worker_script_in_conda_env
+
     if logger: logger.log_operation(**current_log_context, operation_type="process_end", file_type="document", status="success" if overall_success else "failed", details=f"Finished. Final Status: {final_status_msg}")
     return overall_success, final_status_msg
 
@@ -846,6 +655,7 @@ def determine_tasks_to_run(
     if skipped_already_complete_count > 0: script_logger.info(f"Skipped {skipped_already_complete_count} tasks because key output files already exist (overwrite=False).")
     return tasks_to_run, skipped_missing_index_count, skipped_already_complete_count
 
+
 # --- Main Execution ---
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Reorganize corpus documents (Sequential Processing)...", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -857,13 +667,16 @@ if __name__ == "__main__":
     parser.add_argument("--main-env", required=True, help="Name of Conda environment for the main spaCy model (e.g., 'grc_proiel_trf').")
     parser.add_argument("--ner-env", required=True, help="Name of Conda environment for the NER spaCy model (e.g., 'grc_ner_trf').")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing output files. If False, skip documents where key output files exist.")
-    parser.add_argument("--num-workers", type=int, default=1, help="Number of workers (FORCED TO 1 for sequential processing).")
+    # Remove num-workers and use-locking arguments as they are no longer used
+    # parser.add_argument("--num-workers", type=int, default=1, help="Number of workers (FORCED TO 1 for sequential processing).")
+    # parser.add_argument("--use-locking", action="store_true", help="File locking (REMOVED).")
     parser.add_argument("--log-file", default="reorganization_log.csv", help="Path for the detailed CSV log file.")
     parser.add_argument("--wandb-project", default="corpus-reorganization", help="WandB project name for logging.")
     parser.add_argument("--no-wandb", action="store_true", help="Disable Weights & Biases logging.")
     args = parser.parse_args()
 
-    if args.num_workers != 1: script_logger.warning(f"--num-workers ignored, forcing sequential processing."); args.num_workers = 1
+    # Force sequential processing and locking off (redundant now but safe)
+    args.num_workers = 1
     args.use_locking = False
 
     script_logger.info("Validating inputs...")
@@ -881,7 +694,7 @@ if __name__ == "__main__":
 
     script_logger.info("=" * 60); script_logger.info(" Corpus Reorganization Script Started (SEQUENTIAL MODE)"); script_logger.info("=" * 60)
     script_logger.info(f" Run Name: {logger.run_name}")
-    script_logger.info(f" Overwrite Mode: {args.overwrite}"); script_logger.info(f" Parallel Workers: {args.num_workers} (Forced Sequential)")
+    script_logger.info(f" Overwrite Mode: {args.overwrite}"); script_logger.info(f" Workers: {args.num_workers} (Sequential)")
     script_logger.info(f" File Locking: Disabled")
     script_logger.info(f" Mapping CSV: {os.path.abspath(args.mapping_csv)}"); script_logger.info(f" Main Index CSV: {os.path.abspath(args.main_index_csv)}")
     script_logger.info(f" NER Index CSV: {os.path.abspath(args.ner_index_csv)}"); script_logger.info(f" Base Source Dir: {os.path.abspath(args.base_dir)}")
@@ -895,8 +708,10 @@ if __name__ == "__main__":
     if logger.use_wandb and wandb.run:
          try:
               args_for_config=vars(args).copy()
+              # Remove args no longer relevant
               if "log_file" in args_for_config and wandb.config.get("log_file_actual") is not None: del args_for_config["log_file"]
               if "use_locking" in args_for_config: del args_for_config["use_locking"]
+              if "num_workers" in args_for_config: del args_for_config["num_workers"]
               wandb.config.update(args_for_config, allow_val_change=True); script_logger.info("Updated WandB config with script arguments.")
          except Exception as e: logging.warning(f"Failed to fully update wandb config: {e}")
 
@@ -907,17 +722,13 @@ if __name__ == "__main__":
     ner_index = load_index(args.ner_index_csv, log_context=base_log_ctx)
     script_logger.info(f"Loaded {len(mappings)} unique mappings."); script_logger.info(f"Loaded {len(main_index)} unique main index entries."); script_logger.info(f"Loaded {len(ner_index)} unique NER index entries.")
 
-    # --- CORRECTED Exit Condition Checks ---
     if not mappings:
         script_logger.error("Mapping file loaded 0 entries. Cannot proceed. Exiting.")
-        if logger: logger.summarize_and_close()
-        sys.exit(1)
+        if logger: logger.summarize_and_close(); sys.exit(1)
     if not main_index:
         script_logger.error("Main index file loaded 0 entries. Cannot proceed. Exiting.")
-        if logger: logger.summarize_and_close()
-        sys.exit(1)
+        if logger: logger.summarize_and_close(); sys.exit(1)
     if not ner_index: script_logger.warning("NER index file loaded 0 entries. Processing will continue without NER data integration.")
-    # --- END CORRECTION ---
 
     tasks_to_process_info, skipped_missing_index, skipped_already_complete = determine_tasks_to_run(
         mappings=mappings, main_index=main_index, ner_index=ner_index,
