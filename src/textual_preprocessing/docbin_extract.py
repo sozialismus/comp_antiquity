@@ -321,8 +321,8 @@ logging.info(f"Starting extraction for doc ID: {doc_id_str}")
 
 # --- Alignment Function ---
 def attempt_ner_alignment(tokens, ner_tags):
-    logging.info(f"Entering attempt_ner_alignment. len(tokens)={len(tokens)}, len(ner_tags)={len(ner_tags)}")
     token_texts = [str(t.text) for t in tokens]
+    logging.info(f"Entering attempt_ner_alignment. len(tokens)={len(tokens)}, len(ner_tags)={len(ner_tags)}")
     matcher = SequenceMatcher(None, token_texts, ner_tags, autojunk=False)
     aligned_tags = [None] * len(tokens)
     mismatch_details = []
