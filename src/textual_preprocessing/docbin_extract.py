@@ -330,42 +330,67 @@ def attempt_ner_alignment(tokens, ner_tags):
     }}
     blocks_processed = 0
     for block in matcher.get_matching_blocks():
-        if block.size == 0: continue
+        if block.size == 0:
+            continue
         blocks_processed += 1
         token_start, ner_start, size = block.a, block.b, block.size
         logging.debug(f"Match block: token_idx={{token_start}}, ner_idx={{ner_start}}, size={{size}}")
         for i in range(size):
-            token_idx = token_start + i; ner_idx = ner_start + i
+            token_idx = token_start + i
+            ner_idx = ner_start + i
             if token_idx < len(aligned_tags) and ner_idx < len(ner_tags):
-                 aligned_tags[token_idx] = ner_tags[ner_idx]
-                 alignment_stats['aligned_count'] += 1
-                 if len(mismatch_details) < 20:
-                     token_text_safe = token_texts[token_idx] if token_idx < len(token_texts) else "TOKEN_OOB"
-                     ner_tag_safe = ner_tags[ner_idx]
-                     # *** FIX: Escape variables for inner f-string ***
-                     mismatch_details.append(f"Align: tok[{{{{token_idx}}}}]='{{{{token_text_safe}}}}' <-> tag[{{{{ner_idx}}}}]='{{{{ner_tag_safe}}}}'")
-                     # *** END FIX ***
+                aligned_tags[token_idx] = ner_tags[ner_idx]
+                alignment_stats['aligned_count'] += 1
+                if len(mismatch_details) < 20:
+                    token_text_safe = token_texts[token_idx] if token_idx < len(token_texts) else "TOKEN_OOB"
+                    ner_tag_safe = ner_tags[ner_idx]
+                    mismatch_details.append(
+                        f"Align: tok[{{token_idx}}]='{{token_text_safe}}' "
+                        f"<-> tag[{{ner_idx}}]='{{ner_tag_safe}}'"
+                    )
             else:
-                 logging.warning(f"Alignment index out of bounds: token_idx={{token_idx}} (max={{len(aligned_tags)-1}}), ner_idx={{ner_idx}} (max={{len(ner_tags)-1}})")
-    # ... (rest of alignment function remains the same) ...
+                logging.warning(
+                    f"Alignment index out of bounds: token_idx={{token_idx}} (max={{len(aligned_tags)-1}}), "
+                    f"ner_idx={{ner_idx}} (max={{len(ner_tags)-1}})"
+                )
+
     logging.info(f"Alignment processed {{blocks_processed}} matching blocks. Total aligned: {{alignment_stats['aligned_count']}}")
     if alignment_stats['aligned_count'] > 0:
-         alignment_stats['success_rate'] = alignment_stats['aligned_count'] / len(tokens) if len(tokens) > 0 else 0
-         alignment_stats['status'] = 'success' if alignment_stats['aligned_count'] == len(tokens) else 'partial'
-         if alignment_stats['status'] == 'partial':
-             unaligned_tokens = len(tokens) - alignment_stats['aligned_count']
-             logging.info(f"{{unaligned_tokens}} tokens could not be aligned.")
+        alignment_stats['success_rate'] = (
+            alignment_stats['aligned_count'] / len(tokens)
+            if len(tokens) > 0 else 0
+        )
+        alignment_stats['status'] = (
+            'success'
+            if alignment_stats['aligned_count'] == len(tokens)
+            else 'partial'
+        )
+        if alignment_stats['status'] == 'partial':
+            unaligned_tokens = len(tokens) - alignment_stats['aligned_count']
+            logging.info(f"{{unaligned_tokens}} tokens could not be aligned.")
+
+    # define threshold in inner script
     success_threshold = 0.5
+
     if alignment_stats['success_rate'] < success_threshold and alignment_stats['status'] != 'success':
-        logging.warning(f"Alignment quality low ({{alignment_stats['success_rate']:.1%}} < {success_threshold*100:.0f}%). Discarding alignment results.")
+        logging.warning(
+            f"Alignment quality low ({{alignment_stats['success_rate']:.1%}} < {{success_threshold*100:.0f}}%). "
+            "Discarding alignment results."
+        )
         alignment_stats['status'] = 'failed_low_quality'
-        mismatch_details.append(f"Failed: Alignment rate below threshold ({success_threshold:.1%})")
+        mismatch_details.append(
+            f"Failed: Alignment rate below threshold ({{success_threshold:.1%}})"
+        )
         return None, alignment_stats
-    logging.info(f"Alignment Result: Status={{alignment_stats['status']}}, Rate={{alignment_stats['success_rate']:.2%}} (Aligned={{alignment_stats['aligned_count']}}/{{len(tokens)}})")
+
+    logging.info(
+        f"Alignment Result: Status={{alignment_stats['status']}}, "
+        f"Rate={{alignment_stats['success_rate']:.2%}} "
+        f"(Aligned={{alignment_stats['aligned_count']}}/{{len(tokens)}})"
+    )
     return aligned_tags, alignment_stats
 # --- End Alignment Function ---
 
-# (Directory creation logic remains the same)
 dirs_to_check=set([os.path.dirname(p) for p in [output_txt_joined,output_txt_fullstop,output_csv_lemma,output_csv_upos,output_csv_stop,output_csv_dot,output_conllu] if p])
 for d in dirs_to_check:
     if d:
@@ -373,7 +398,6 @@ for d in dirs_to_check:
         except OSError as e: logging.error(f"Failed to create directory {{d}}: {{e}}"); sys.exit(1)
 
 try:
-    # (Model/DocBin loading logic remains the same)
     logging.info(f"Loading spaCy model 'grc_proiel_trf'...")
     nlp = spacy.load('grc_proiel_trf');
     logging.info(f"Loading DocBin from {{docbin_path}}...")
@@ -382,10 +406,10 @@ try:
     doc = docs[0]; num_tokens = len(doc)
     logging.info(f"Successfully loaded doc with {{num_tokens}} tokens.")
 
-    # (TXT extraction logic using regex patterns remains the same)
     doc_text = doc.text
     logging.info(f"Writing joined text to {{output_txt_joined}}...")
     with open(output_txt_joined,'w',encoding='utf-8') as f: f.write(doc_text)
+
     logging.info(f"Processing and writing fullstop text to {{output_txt_fullstop}}...")
     try:
         pat1 = r'{regex_p1_script_literal}'; rep1 = r'{regex_r1_script_literal}'
@@ -400,7 +424,6 @@ try:
         with open(output_txt_fullstop,'w',encoding='utf-8') as f: f.write(tfs)
     except Exception as fs_e: logging.warning(f"Failed to generate fullstop format: {{fs_e}}", exc_info=True)
 
-    # (CSV extraction logic remains the same)
     logging.info("Writing CSV annotation files...")
     try:
         with open(output_csv_lemma,'w',encoding='utf-8',newline='') as fl, \\
@@ -418,7 +441,6 @@ try:
         logging.info("Finished writing CSV files.")
     except Exception as csv_e: logging.error(f"Failed during CSV writing: {{csv_e}}", exc_info=True); sys.exit(1)
 
-    # (NER processing logic remains the same)
     original_ner_tags = None; ner_tags_to_use = None; alignment_info = None; mismatch_detected = False
     mismatch_data_for_json = {{}}
     logging.info(f"Checking for NER tags at: {{ner_tags_path}}")
@@ -446,7 +468,6 @@ try:
     else:
         logging.info("No NER tags path provided. Skipping NER integration."); mismatch_data_for_json = None
 
-    # (CoNLL-U writing logic remains the same)
     logging.info(f"Writing CoNLL-U file to {{output_conllu}}...")
     try:
         with open(output_conllu,"w",encoding="utf-8") as fo:
@@ -481,7 +502,6 @@ try:
         logging.info("Finished writing CoNLL-U file.")
     except Exception as conllu_e: logging.error(f"Failed during CoNLL-U writing: {{conllu_e}}", exc_info=True); sys.exit(1)
 
-    # (Mismatch JSON writing logic remains the same)
     if mismatch_detected and mismatch_data_for_json:
         mismatch_info_file_path = os.path.join(os.path.dirname(output_conllu), f"{{doc_id_str}}_ner_mismatch_info.json")
         mismatch_info_file_path_esc = mismatch_info_file_path.replace('\\\\', '\\\\\\\\')
@@ -513,7 +533,6 @@ sys.exit(0)
         'file_type': 'main-model-outputs'
     })
     return run_python_script_in_conda_env(conda_env, script_content, run_log_ctx, logger, timeout=1200)
-
 
 # (Keep extract_ner_model_outputs as is)
 @timed_operation("extract_ner_outputs")
@@ -586,6 +605,7 @@ sys.exit(0)
     })
     return run_python_script_in_conda_env(conda_env, script_content, run_log_ctx, logger, timeout=600)
 
+
 # (Keep summarize_token_mismatches as is)
 @timed_operation("summarize_mismatches")
 def summarize_token_mismatches(output_base_dir: str, logger: Optional[FileOperationLogger] = None):
@@ -638,7 +658,6 @@ def summarize_token_mismatches(output_base_dir: str, logger: Optional[FileOperat
         script_logger.error(f"Failed to write token mismatch summary: {e}", exc_info=True)
         if logger: logger.log_operation(**log_ctx_summary, status='failed', details=f"Error: {e}")
     return summary
-
 
 # (Keep Helper Functions as is)
 def validate_input_file(file_path: str, file_type: str) -> bool:
@@ -746,8 +765,7 @@ def get_expected_output_paths(output_base_dir: str, corpus_prefix: str, new_id: 
         "ner_error_info": os.path.join(annotations_dir, f"{new_id}_ner_error_info.json"),
     }
 
-# --- START REPLACEMENT: process_document (No Locking Version) ---
-# --- Modified Main Processing Logic (No Locking) ---
+# (Keep process_document as the No Locking Version)
 @timed_operation("process_document")
 def process_document(
     old_id: str, new_id: str, base_dir: str, output_base_dir: str,
@@ -760,29 +778,21 @@ def process_document(
     overall_success = True; final_status_msg = "Success"; temp_files_to_clean = []
     corpus_prefix_match = re.match(r'^([a-zA-Z0-9\-_]+?)_', old_id)
     corpus_prefix = corpus_prefix_match.group(1) if corpus_prefix_match else "unknown_corpus"
-
     current_log_context = {'old_id': old_id, 'new_id': new_id, 'corpus_prefix': corpus_prefix}
     if log_context:
         for key, value in log_context.items():
-            if key not in current_log_context:
-                current_log_context[key] = value
-
-    # Log start (locking parameter L=False)
+            if key not in current_log_context: current_log_context[key] = value
     if logger: logger.log_operation(**current_log_context, operation_type="process_start", file_type="document", status="info", details=f"Processing (O={overwrite}, L=False)")
-
-    # --- Path Retrieval ---
     main_docbin_path = main_index.get(old_id)
     if not main_docbin_path or not os.path.isfile(main_docbin_path):
          if logger: logger.log_operation(**current_log_context, operation_type="lookup", file_type="main_docbin", status="failed", details="Main docbin path invalid/not found during processing step!")
          return False, "Failed: Main DocBin vanished post-check"
-
     ner_docbin_path = ner_index.get(old_id)
     ner_docbin_path_resolved = None
     if ner_docbin_path and os.path.isfile(ner_docbin_path): ner_docbin_path_resolved = ner_docbin_path
     elif ner_docbin_path:
         if logger: logger.log_operation(**current_log_context, operation_type="lookup", file_type="ner_docbin", status="warning", details="NER index path invalid/not found during processing step.")
     else: script_logger.debug(f"[{old_id}->{new_id}] No NER docbin path found in index.")
-
     source_txt_path = find_original_text(old_id, base_dir)
     paths = get_expected_output_paths(output_base_dir, corpus_prefix, new_id)
     texts_dir = paths["texts_dir"]; annotations_dir = paths["annotations_dir"]
@@ -791,58 +801,29 @@ def process_document(
     output_csv_stop=paths["output_csv_stop"]; output_csv_dot=paths["output_csv_dot"]
     output_csv_ner=paths["output_csv_ner"]; output_conllu=paths["output_conllu"]
     temp_ner_tags_file=Path(paths["temp_ner_tags_file"]); temp_files_to_clean.append(str(temp_ner_tags_file))
-    # ner_tags_lock_path=str(temp_ner_tags_file)+".lock" # Lock file path no longer needed
     dest_original_txt = paths["source_original_txt"]
-    # lock_dir = os.path.dirname(ner_tags_lock_path) # Lock dir no longer needed
-
-    # --- Directory Creation ---
     try:
-        os.makedirs(annotations_dir, exist_ok=True)
-        script_logger.debug(f"[{old_id}->{new_id}] Ensured annotations directory exists: {annotations_dir}")
-        os.makedirs(texts_dir, exist_ok=True)
-        script_logger.debug(f"[{old_id}->{new_id}] Ensured texts directory exists: {texts_dir}")
+        os.makedirs(annotations_dir, exist_ok=True); script_logger.debug(f"[{old_id}->{new_id}] Ensured annotations directory exists: {annotations_dir}")
+        os.makedirs(texts_dir, exist_ok=True); script_logger.debug(f"[{old_id}->{new_id}] Ensured texts directory exists: {texts_dir}")
     except OSError as e:
          if logger: logger.log_operation(**current_log_context, operation_type="create_dir", file_type="directory", status="failed", details=f"Dir creation error for {texts_dir} or {annotations_dir}: {e}")
          return False, f"Failed: Dir creation error {e}"
-
     try:
-        # --- NER Extraction ---
-        ner_tags_available = False # Track if tags should exist
+        ner_tags_available = False
         if ner_docbin_path_resolved:
             script_logger.info(f"[{old_id}->{new_id}] Extracting NER outputs...")
-            # --- LOCKING REMOVED ---
-            # Direct call without lock
-            if extract_ner_model_outputs(ner_env, ner_docbin_path_resolved, output_csv_ner, str(temp_ner_tags_file), logger, **current_log_context):
-                ner_tags_available = True
-            else:
-                # Failure logged within extract_ner_model_outputs
-                overall_success = False; final_status_msg = "Failed: NER extraction"
+            if extract_ner_model_outputs(ner_env, ner_docbin_path_resolved, output_csv_ner, str(temp_ner_tags_file), logger, **current_log_context): ner_tags_available = True
+            else: overall_success = False; final_status_msg = "Failed: NER extraction"
         else:
              if logger: logger.log_operation(**current_log_context, operation_type="extract", file_type="ner-model-outputs", status="skipped", details="NER docbin not resolved or found during processing step.")
-
-        # --- Main Model Extraction ---
         if overall_success:
             ner_tags_input_path = None
-            # --- LOCKING REMOVED ---
-            # Check for tags file directly (if NER step ran)
-            if temp_ner_tags_file.is_file():
-                ner_tags_input_path = str(temp_ner_tags_file)
+            if temp_ner_tags_file.is_file(): ner_tags_input_path = str(temp_ner_tags_file)
             elif ner_tags_available:
-                 # Warning if NER supposedly succeeded but file isn't there
                  if logger: logger.log_operation(**current_log_context, operation_type="read", file_type="temp_ner_tags", status="warning", details="NER extraction reported success but temp tags file not found before main extraction.")
-
             script_logger.info(f"[{old_id}->{new_id}] Extracting Main Model outputs (using NER tags: {ner_tags_input_path is not None})...")
-            # Direct call without lock
-            if not extract_main_model_outputs(
-                main_env, main_docbin_path,
-                output_txt_joined, output_txt_fullstop,
-                output_csv_lemma, output_csv_upos, output_csv_stop, output_csv_dot,
-                output_conllu, ner_tags_input_path, new_id, logger, **current_log_context
-            ):
-                # Failure logged within extract_main_model_outputs
+            if not extract_main_model_outputs( main_env, main_docbin_path, output_txt_joined, output_txt_fullstop, output_csv_lemma, output_csv_upos, output_csv_stop, output_csv_dot, output_conllu, ner_tags_input_path, new_id, logger, **current_log_context):
                 overall_success = False; final_status_msg = "Failed: Main model extraction"
-
-        # --- Copy Original Text ---
         if source_txt_path:
             if overwrite or not os.path.exists(dest_original_txt):
                  try:
@@ -854,16 +835,11 @@ def process_document(
                   if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", status="skipped", details="Destination original text exists (overwrite=False)")
         else:
             if logger: logger.log_operation(**current_log_context, operation_type="copy", file_type="source_txt", status="skipped", details="Source original text file not found.")
-
     except Exception as e:
-         # Catch any unexpected errors during the main processing block
          script_logger.error(f"!!! Unexpected Error during processing for doc {old_id}->{new_id}: {type(e).__name__}: {e}", exc_info=True)
          if logger: logger.log_operation(**current_log_context, operation_type="processing", file_type="document", status="failed", details=f"Unexpected Error: {type(e).__name__}: {e}")
          overall_success = False; final_status_msg = f"Failed: Unexpected Error ({type(e).__name__})"
-
-
     finally:
-        # --- Cleanup ---
         script_logger.debug(f"[{old_id}->{new_id}] Cleaning up temporary files...")
         for temp_file_path_str in temp_files_to_clean:
             temp_file_p = Path(temp_file_path_str)
@@ -871,15 +847,12 @@ def process_document(
                 try: temp_file_p.unlink(); script_logger.debug(f"[{old_id}->{new_id}] Removed temp file: {temp_file_p.name}")
                 except OSError as e:
                     if logger: logger.log_operation(**current_log_context, operation_type="cleanup", file_type="temp_file", status="failed", details=f"Error removing {temp_file_p.name}: {e}")
-        # --- LOCKING REMOVED: No lock file cleanup needed ---
-
     if logger: logger.log_operation(**current_log_context, operation_type="process_end", file_type="document", status="success" if overall_success else "failed", details=f"Finished. Final Status: {final_status_msg}")
     return overall_success, final_status_msg
-# --- END REPLACEMENT: process_document ---
 
 
-# --- (#8) Graceful Shutdown Handler ---
-_shutdown_requested = False # Simpler global flag now
+# (Keep setup_graceful_shutdown as is)
+_shutdown_requested = False
 def setup_graceful_shutdown():
     def handler(sig, frame):
         global _shutdown_requested
@@ -892,15 +865,13 @@ def setup_graceful_shutdown():
         else: script_logger.info("Shutdown already in progress.")
     signal.signal(signal.SIGINT, handler); signal.signal(signal.SIGTERM, handler)
 
-
-# --- Pre-check Function ---
+# (Keep determine_tasks_to_run as is)
 @timed_operation("determine_tasks")
 def determine_tasks_to_run(
     mappings: Dict[str, str], main_index: Dict[str, str], ner_index: Dict[str, str],
     output_base_dir: str, overwrite: bool, logger: Optional[FileOperationLogger] = None,
     log_context: Dict = None
 ) -> Tuple[List[Dict[str, Any]], int, int]:
-    """Pre-checks mappings against indices and existing files."""
     tasks_to_run = []; skipped_missing_index_count = 0; skipped_already_complete_count = 0
     total_potential_tasks = len(mappings)
     script_logger.info(f"Pre-checking {total_potential_tasks} potential documents based on mapping...")
@@ -952,18 +923,14 @@ if __name__ == "__main__":
     parser.add_argument("--main-env", required=True, help="Name of Conda environment for the main spaCy model (e.g., 'grc_proiel_trf').")
     parser.add_argument("--ner-env", required=True, help="Name of Conda environment for the NER spaCy model (e.g., 'grc_ner_trf').")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing output files. If False, skip documents where key output files exist.")
-    # --- WORKERS FIXED TO 1 ---
     parser.add_argument("--num-workers", type=int, default=1, help="Number of workers (FORCED TO 1 for sequential processing).")
     parser.add_argument("--log-file", default="reorganization_log.csv", help="Path for the detailed CSV log file.")
     parser.add_argument("--wandb-project", default="corpus-reorganization", help="WandB project name for logging.")
     parser.add_argument("--no-wandb", action="store_true", help="Disable Weights & Biases logging.")
     args = parser.parse_args()
 
-    # Force sequential processing and locking off
-    if args.num_workers != 1:
-        script_logger.warning(f"--num-workers was set to {args.num_workers}, but script is configured to run sequentially. Forcing workers to 1.")
-        args.num_workers = 1
-    args.use_locking = False # Ensure locking is always false
+    if args.num_workers != 1: script_logger.warning(f"--num-workers ignored, forcing sequential processing."); args.num_workers = 1
+    args.use_locking = False
 
     script_logger.info("Validating inputs...")
     valid_inputs = True
@@ -1006,12 +973,8 @@ if __name__ == "__main__":
     ner_index = load_index(args.ner_index_csv, log_context=base_log_ctx)
     script_logger.info(f"Loaded {len(mappings)} unique mappings."); script_logger.info(f"Loaded {len(main_index)} unique main index entries."); script_logger.info(f"Loaded {len(ner_index)} unique NER index entries.")
 
-    if not mappings:
-        script_logger.error("Mapping file loaded 0 entries. Cannot proceed. Exiting.");
-        if logger: logger.summarize_and_close(); sys.exit(1)
-    if not main_index:
-        script_logger.error("Main index file loaded 0 entries. Cannot proceed. Exiting.");
-        if logger: logger.summarize_and_close(); sys.exit(1)
+    if not mappings: script_logger.error("Mapping file loaded 0 entries. Cannot proceed. Exiting."); if logger: logger.summarize_and_close(); sys.exit(1)
+    if not main_index: script_logger.error("Main index file loaded 0 entries. Cannot proceed. Exiting."); if logger: logger.summarize_and_close(); sys.exit(1)
     if not ner_index: script_logger.warning("NER index file loaded 0 entries. Processing will continue without NER data integration.")
 
     tasks_to_process_info, skipped_missing_index, skipped_already_complete = determine_tasks_to_run(
